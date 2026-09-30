@@ -1,0 +1,2501 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>初中电学实验室 · 直流电路仿真</title>
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        font-family: "Microsoft YaHei", "Segoe UI", Tahoma, sans-serif;
+        background: #f0f2f5; color: #2c3e50; overflow: hidden;
+        -webkit-user-select: none; user-select: none;
+    }
+    .simulator-container { display: flex; height: 100vh; }
+
+    /* ===== 元件库 ===== */
+    .component-library {
+        width: 200px; background: linear-gradient(to bottom, #2c3e50, #34495e);
+        color: #fff; padding: 12px 10px; overflow-y: auto;
+        box-shadow: 2px 0 10px rgba(0,0,0,.2); z-index: 10; flex-shrink: 0;
+    }
+    .lib-title { font-size: 17px; font-weight: 700; text-align: center; margin-bottom: 12px; letter-spacing: 1px; }
+    .component-category { margin-bottom: 16px; }
+    .component-category h3 {
+        font-size: 14px; margin-bottom: 8px; padding-bottom: 4px;
+        border-bottom: 1px solid #4a6572; color: #ecf0f1;
+    }
+    .component-item {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px; margin: 6px 0; background: rgba(255,255,255,.08);
+        border: 1px solid rgba(255,255,255,.15); border-radius: 6px;
+        cursor: grab; transition: all .15s ease; font-size: 13px;
+    }
+    .component-item:hover { background: rgba(52,152,219,.35); transform: translateX(3px); }
+    .component-item:active { cursor: grabbing; }
+    .component-item .ico { width: 44px; height: 26px; flex-shrink: 0; }
+    .component-item .ico svg { width: 100%; height: 100%; }
+    .component-item .ico svg * { stroke: #ecf0f1; fill: none; stroke-width: 2; stroke-linecap: round; }
+    .component-item .ico svg text { stroke: none; fill: #ecf0f1; }
+    .component-item .lbl small { display: block; opacity: .65; font-size: 11px; }
+    .hint-box {
+        font-size: 11px; line-height: 1.6; color: #bdc3c7;
+        background: rgba(0,0,0,.2); border-radius: 6px; padding: 8px; margin-top: 10px;
+    }
+
+    /* ===== 主区域 ===== */
+    .main-content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .toolbar {
+        padding: 10px 12px; background: linear-gradient(to right, #3498db, #2980b9);
+        display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+        box-shadow: 0 2px 5px rgba(0,0,0,.15); z-index: 6;
+    }
+    .tool-button {
+        padding: 7px 13px; background: #fff; border: none; border-radius: 5px;
+        cursor: pointer; font-weight: 600; font-size: 13px; color: #2c3e50;
+        transition: all .15s ease; box-shadow: 0 2px 4px rgba(0,0,0,.1);
+    }
+    .tool-button:hover { background: #eaf4fb; transform: translateY(-1px); }
+    .tool-button.active { background: #2ecc71; color: #fff; }
+    .tool-button.warning { background: #e74c3c; color: #fff; }
+    .tool-button.warning:hover { background: #c0392b; }
+    .tool-separator { width: 1px; height: 24px; background: rgba(255,255,255,.35); margin: 0 4px; }
+    .tool-status {
+        margin-left: auto; color: #fff; font-weight: 700; padding: 6px 12px;
+        background: rgba(0,0,0,.25); border-radius: 5px; font-size: 13px;
+    }
+    /* 实验菜单 */
+    .menu-wrap { position: relative; }
+    .menu-dropdown {
+        position: absolute; top: 110%; left: 0; background: #fff; border-radius: 6px;
+        box-shadow: 0 6px 20px rgba(0,0,0,.25); overflow: hidden; min-width: 230px;
+        display: none; z-index: 50;
+    }
+    .menu-dropdown.show { display: block; }
+    .menu-dropdown div {
+        padding: 10px 14px; font-size: 13px; color: #2c3e50; cursor: pointer; border-bottom: 1px solid #eee;
+    }
+    .menu-dropdown div:hover { background: #eaf4fb; }
+    .menu-dropdown div small { display: block; color: #7f8c8d; font-size: 11px; }
+
+    /* ===== 画布 ===== */
+    .canvas-container { flex: 1; position: relative; background: #fbfcfd; overflow: hidden; }
+    #circuit-canvas { display: block; cursor: default; }
+
+    /* 引导面板 */
+    #guide-panel {
+        position: absolute; top: 14px; left: 14px; width: 280px; max-height: 70%;
+        background: rgba(255,255,255,.97); border: 2px solid #3498db; border-radius: 10px;
+        box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 14px; overflow-y: auto;
+        display: none; z-index: 8; font-size: 13px; line-height: 1.7;
+    }
+    #guide-panel.show { display: block; }
+    #guide-panel h4 { color: #2980b9; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+    #guide-panel .close-g { cursor: pointer; color: #e74c3c; font-weight: 700; font-size: 16px; }
+    #guide-panel ol { margin-left: 18px; }
+    #guide-panel li { margin-bottom: 5px; }
+    #guide-panel .goal { background: #eaf4fb; padding: 8px; border-radius: 6px; margin-bottom: 10px; }
+
+    #schematic-mini {
+        position: absolute; right: 14px; top: 14px; width: 260px; height: 180px;
+        background: rgba(255,255,255,.96); border: 2px solid #34495e; border-radius: 10px;
+        box-shadow: 0 8px 24px rgba(0,0,0,.16); display: none; z-index: 7; overflow: hidden;
+    }
+    #schematic-mini.show { display: block; }
+    #schematic-mini .mini-title {
+        height: 26px; line-height: 26px; padding: 0 9px; font-size: 12px; font-weight: 700;
+        color: #2c3e50; background: #ecf0f1; border-bottom: 1px solid #d8dee4;
+    }
+    #mini-canvas { display: block; width: 260px; height: 154px; }
+
+    /* 右键菜单 */
+    #context-menu {
+        position: fixed; background: #fff; border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.25);
+        overflow: hidden; display: none; z-index: 60; min-width: 120px;
+    }
+    #context-menu div { padding: 9px 14px; font-size: 13px; cursor: pointer; color: #2c3e50; }
+    #context-menu div:hover { background: #eaf4fb; }
+
+    .drag-indicator {
+        position: fixed; pointer-events: none; z-index: 100; opacity: 0;
+        background: rgba(52,152,219,.9); color: #fff; padding: 4px 8px; border-radius: 4px;
+        font-size: 12px; transition: opacity .15s;
+    }
+    .drag-indicator.visible { opacity: 1; }
+
+    /* ===== 属性面板 ===== */
+    .properties-panel {
+        width: 270px; background: linear-gradient(to bottom, #34495e, #2c3e50);
+        color: #fff; padding: 14px; overflow-y: auto; flex-shrink: 0;
+        box-shadow: -2px 0 10px rgba(0,0,0,.2);
+    }
+    .properties-panel h3 { margin-bottom: 12px; padding-bottom: 6px; border-bottom: 1px solid #4a6572; }
+    .property-group { margin-bottom: 14px; background: rgba(255,255,255,.05); padding: 11px; border-radius: 6px; }
+    .property-group h4 { margin-bottom: 9px; color: #5dade2; font-size: 14px; }
+    .property-control { margin-bottom: 9px; }
+    .property-control label { display: block; margin-bottom: 4px; font-size: 13px; }
+    .property-control input, .property-control select {
+        width: 100%; padding: 7px; border: 1px solid #4a6572; border-radius: 4px;
+        background: #2c3e50; color: #fff; font-size: 13px;
+    }
+    .property-control input[type=range] { padding: 0; }
+    #selected-component-info { background: rgba(52,152,219,.2); padding: 9px; border-radius: 4px; font-size: 13px; }
+    .measurement-value { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 13px; }
+    .value { font-weight: 700; color: #2ecc71; }
+    .badge-warn { color: #e74c3c; font-weight: 700; }
+    #circuit-info p { font-size: 13px; margin-bottom: 3px; }
+
+    /* ===== 启动：操作方式选择 ===== */
+    #mode-modal {
+        position: fixed; inset: 0; background: rgba(20,30,45,.78); z-index: 200;
+        display: flex; align-items: center; justify-content: center;
+    }
+    #mode-modal .box {
+        background: #fff; border-radius: 16px; padding: 30px 34px; text-align: center;
+        box-shadow: 0 20px 60px rgba(0,0,0,.4); max-width: 460px;
+    }
+    #mode-modal h2 { color: #2c3e50; margin-bottom: 6px; font-size: 22px; }
+    #mode-modal p { color: #7f8c8d; margin-bottom: 22px; font-size: 14px; }
+    #mode-modal .choices { display: flex; gap: 18px; justify-content: center; }
+    #mode-modal .choice {
+        flex: 1; border: 2px solid #e1e8ed; border-radius: 12px; padding: 22px 16px;
+        cursor: pointer; transition: all .15s ease;
+    }
+    #mode-modal .choice:hover { border-color: #3498db; background: #eaf4fb; transform: translateY(-3px); }
+    #mode-modal .choice .emo { font-size: 42px; }
+    #mode-modal .choice .t { font-size: 17px; font-weight: 700; color: #2c3e50; margin-top: 8px; }
+    #mode-modal .choice .d { font-size: 12px; color: #95a5a6; margin-top: 4px; line-height: 1.5; }
+
+    /* 触屏模式：放大工具按钮，便于点击 */
+    body.touch .tool-button { padding: 11px 16px; font-size: 14px; }
+    body.touch .component-item { padding: 11px; }
+</style>
+</head>
+<body>
+<div class="simulator-container">
+
+    <!-- ========== 元件库 ========== -->
+    <div class="component-library">
+        <div class="lib-title">⚡ 电学实验室</div>
+
+        <div class="component-category">
+            <h3>电源</h3>
+            <div class="component-item" draggable="true" data-type="battery" data-voltage="3">
+                <span class="ico">{{BAT}}</span><span class="lbl">学生电源<small>电压可调 (默认3V)</small></span>
+            </div>
+        </div>
+
+        <div class="component-category">
+            <h3>用电器</h3>
+            <div class="component-item" draggable="true" data-type="resistor" data-resistance="10">
+                <span class="ico">{{RES}}</span><span class="lbl">定值电阻<small>10Ω</small></span>
+            </div>
+            <div class="component-item" draggable="true" data-type="resistor" data-resistance="20">
+                <span class="ico">{{RES}}</span><span class="lbl">定值电阻<small>20Ω</small></span>
+            </div>
+            <div class="component-item" draggable="true" data-type="bulb" data-resistance="10" data-current="0.3">
+                <span class="ico">{{BULB}}</span><span class="lbl">小灯泡<small>10Ω 额定0.3A</small></span>
+            </div>
+        </div>
+
+        <div class="component-category">
+            <h3>控制元件</h3>
+            <div class="component-item" draggable="true" data-type="switch">
+                <span class="ico">{{SW}}</span><span class="lbl">开关<small>单刀单掷</small></span>
+            </div>
+            <div class="component-item" draggable="true" data-type="potentiometer" data-resistance="20">
+                <span class="ico">{{POT}}</span><span class="lbl">滑动变阻器<small>0~20Ω</small></span>
+            </div>
+        </div>
+
+        <div class="component-category">
+            <h3>测量仪表</h3>
+            <div class="component-item" draggable="true" data-type="ammeter">
+                <span class="ico">{{AM}}</span><span class="lbl">电流表<small>0~0.6 / 0~3 A</small></span>
+            </div>
+            <div class="component-item" draggable="true" data-type="voltmeter">
+                <span class="ico">{{VM}}</span><span class="lbl">电压表<small>0~3 / 0~15 V</small></span>
+            </div>
+        </div>
+
+        <div class="hint-box">
+            💡 <b>怎么用</b><br>
+            ① 拖元件到画布<br>
+            ② 点「导线」→ 点接线柱A → 点接线柱B 连线<br>
+            ③ 点元件可在右侧改参数<br>
+            ④ 选中后按 <b>R</b> 旋转、<b>Del</b> 删除<br>
+            ⑤ 双击开关可通断
+        </div>
+    </div>
+
+    <!-- ========== 主区域 ========== -->
+    <div class="main-content">
+        <div class="toolbar">
+            <button class="tool-button active" id="select-tool">🖱 选择</button>
+            <button class="tool-button" id="wire-tool">✏ 导线</button>
+            <div class="tool-separator"></div>
+            <button class="tool-button" id="undo-btn">↶ 撤销</button>
+            <button class="tool-button" id="rotate-btn">↻ 旋转</button>
+            <button class="tool-button warning" id="delete-btn">🗑 删除</button>
+            <div class="tool-separator"></div>
+            <div class="menu-wrap">
+                <button class="tool-button" id="exp-menu-btn">📘 实验 ▾</button>
+                <div class="menu-dropdown" id="exp-menu"></div>
+            </div>
+            <div class="tool-separator"></div>
+            <button class="tool-button" id="view-toggle">🔌 实物图</button>
+            <button class="tool-button" id="toggle-grid">网格</button>
+            <button class="tool-button" id="fit-view">⊡ 适应</button>
+            <button class="tool-button" id="zoom-in">放大＋</button>
+            <button class="tool-button" id="zoom-out">缩小－</button>
+            <button class="tool-button" id="input-mode-btn">🖱 鼠标</button>
+            <button class="tool-button warning" id="clear-all">清空</button>
+            <div class="tool-status" id="simulation-status">仿真运行中</div>
+        </div>
+
+        <div class="canvas-container" id="canvas-container">
+            <canvas id="circuit-canvas" width="1000" height="700">浏览器不支持 Canvas</canvas>
+            <div id="guide-panel"></div>
+            <div id="schematic-mini"><div class="mini-title">参考电路图</div><canvas id="mini-canvas" width="260" height="154"></canvas></div>
+            <div id="context-menu"></div>
+            <div class="drag-indicator" id="drag-indicator"></div>
+        </div>
+    </div>
+
+    <!-- ========== 属性面板 ========== -->
+    <div class="properties-panel">
+        <h3>📋 属性面板</h3>
+        <div class="property-group">
+            <h4>选中元件</h4>
+            <div id="selected-component-info"><p>未选择任何元件</p></div>
+            <div id="component-properties"></div>
+        </div>
+        <div class="property-group">
+            <h4>电路状态</h4>
+            <div id="circuit-state"><p>—</p></div>
+        </div>
+        <div class="property-group">
+            <h4>整体测量（主电源）</h4>
+            <div id="measurement-results">
+                <div class="measurement-value"><span>电源电压:</span><span class="value">0 V</span></div>
+                <div class="measurement-value"><span>干路电流:</span><span class="value">0 A</span></div>
+                <div class="measurement-value"><span>总电阻:</span><span class="value">— Ω</span></div>
+            </div>
+        </div>
+        <div class="property-group">
+            <h4>电路信息</h4>
+            <div id="circuit-info">
+                <p>元件数量: <span id="component-count">0</span></p>
+                <p>导线数量: <span id="wire-count">0</span></p>
+                <p>连接状态: <span id="connection-status">未连接</span></p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 启动：操作方式选择 -->
+<div id="mode-modal">
+    <div class="box">
+        <h2>⚡ 欢迎来到电学实验室</h2>
+        <p>请选择你的操作方式（可随时在右上角切换重选）</p>
+        <div class="choices">
+            <div class="choice" data-mode="mouse">
+                <div class="emo">🖱️</div>
+                <div class="t">鼠标操作</div>
+                <div class="d">电脑端<br>点击 / 拖拽 / 滚轮缩放</div>
+            </div>
+            <div class="choice" data-mode="touch">
+                <div class="emo">👆</div>
+                <div class="t">触屏操作</div>
+                <div class="d">平板 / 触摸屏<br>手指拖拽 / 双指缩放</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+/* ============================================================
+ *  线性方程组求解（高斯-约当消元，带部分主元）
+ * ============================================================ */
+function solveLinear(A, b) {
+    const n = b.length;
+    if (n === 0) return [];
+    const M = A.map((row, i) => row.concat([b[i]]));
+    for (let col = 0; col < n; col++) {
+        let piv = col;
+        for (let r = col + 1; r < n; r++)
+            if (Math.abs(M[r][col]) > Math.abs(M[piv][col])) piv = r;
+        if (Math.abs(M[piv][col]) < 1e-12) continue; // 近奇异，靠正则项兜底
+        [M[col], M[piv]] = [M[piv], M[col]];
+        const pv = M[col][col];
+        for (let j = col; j <= n; j++) M[col][j] /= pv;
+        for (let r = 0; r < n; r++) {
+            if (r === col) continue;
+            const f = M[r][col];
+            if (f !== 0) for (let j = col; j <= n; j++) M[r][j] -= f * M[col][j];
+        }
+    }
+    return M.map(row => row[n]);
+}
+
+/* ============================================================
+ *  元件注册表（数据驱动，便于扩展新器材）
+ *  terminals(comp) 返回元件本地坐标系下的接线柱
+ * ============================================================ */
+const COMPONENT_DEFS = {
+    battery: {
+        name: '电源', selRadius: 36,
+        terminals: () => [ {id:'pos', x:-32, y:0}, {id:'neg', x:32, y:0} ],
+        defaults: { voltage: 3 }
+    },
+    resistor: {
+        name: '定值电阻', selRadius: 34,
+        terminals: () => [ {id:'a', x:-32, y:0}, {id:'b', x:32, y:0} ],
+        defaults: { resistance: 10 }
+    },
+    bulb: {
+        name: '小灯泡', selRadius: 42,
+        // 裸小灯泡的两个真实触点：侧面金属壳(shell)与底部触点(tip)
+        terminals: () => [ {id:'shell', x:-22, y:10}, {id:'tip', x:0, y:28} ],
+        defaults: { resistance: 10, ratedCurrent: 0.3, current: 0 }
+    },
+    switch: {
+        name: '开关', selRadius: 32,
+        terminals: () => [ {id:'a', x:-30, y:0}, {id:'b', x:30, y:0} ],
+        defaults: { state: 'open' }
+    },
+    potentiometer: {
+        name: '滑动变阻器', selRadius: 62,
+        // a,b: 电阻丝两端(下排接线柱)；c,d: 滑片杆两端(上排接线柱，电气相连=滑片)
+        terminals: () => [
+            {id:'a', x:-48, y:24}, {id:'b', x:48, y:24},
+            {id:'c', x:-48, y:-28}, {id:'d', x:48, y:-28}
+        ],
+        defaults: { resistance: 20, position: 0.5 }
+    },
+    ammeter: {
+        name: '电流表', selRadius: 58,
+        terminals: () => [ {id:'neg', x:-26, y:28}, {id:'r0_6', x:0, y:28}, {id:'r3', x:26, y:28} ],
+        defaults: { measurement: 0, range: 0.6 }
+    },
+    voltmeter: {
+        name: '电压表', selRadius: 58,
+        terminals: () => [ {id:'neg', x:-26, y:28}, {id:'r3', x:0, y:28}, {id:'r15', x:26, y:28} ],
+        defaults: { measurement: 0, range: 3 }
+    }
+};
+
+/* ============================================================
+ *  仿真器主类
+ * ============================================================ */
+class CircuitSimulator {
+    constructor(canvasId) {
+        this.canvas = document.getElementById(canvasId);
+        this.ctx = this.canvas.getContext('2d');
+        this.components = [];
+        this.wires = [];
+        this.selectedComponent = null;
+        this.selectedWire = null;
+        this.dragging = false;
+        this.draggingControlPoint = null; // {wire,index}
+        this.simulationRunning = true;   // 默认实时仿真，利于自由探索
+        this.showGrid = true;
+        this.scale = 1.0;
+        this.panX = 40; this.panY = 30;
+        this.isPanning = false;
+        this.lastPanPoint = {x:0, y:0};
+        this.lastMousePos = {x:0, y:0};
+        this.contextPoint = {x:0, y:0};
+        this.currentTool = 'select';
+        this.wireDrawing = false;
+        this.draftWire = null;           // {start:{compId,termId}, bends:[]}
+        this.draftPos = {x:0, y:0};
+        this.snapRadius = 13;
+        this.gridSize = 20;
+        this.idCounter = 0;
+        this.shortCircuit = false;
+        this.viewMode = 'schematic';     // 'schematic' 电路图 | 'real' 实物图
+        this.inputMode = 'mouse';        // 'mouse' | 'touch'
+        this.hitScale = 1;               // 触屏时放大命中半径
+        this.flowPhase = 0;              // 电流流动动画相位
+        this._lastTs = undefined;
+        this.undoStack = [];
+        this.maxUndo = 6;
+        this.suppressUndo = false;
+        this.activeExperiment = null;
+        this.schematicReference = null;
+
+        this.resizeCanvas();
+        this.setupEventListeners();
+        this.buildExperimentMenu();
+        this.recalc();
+        requestAnimationFrame(ts => this.animate(ts));   // 启动电流动画循环
+    }
+
+    /* ---------- 初始化与事件 ---------- */
+    resizeCanvas() {
+        const box = document.getElementById('canvas-container');
+        this.canvas.width = box.clientWidth;
+        this.canvas.height = box.clientHeight;
+        this.draw();
+    }
+
+    setupEventListeners() {
+        window.addEventListener('resize', () => this.resizeCanvas());
+
+        this.canvas.addEventListener('mousedown', e => this.handleMouseDown(e));
+        this.canvas.addEventListener('mousemove', e => this.handleMouseMove(e));
+        this.canvas.addEventListener('mouseup', e => this.handleMouseUp(e));
+        this.canvas.addEventListener('wheel', e => this.handleWheel(e), {passive:false});
+        this.canvas.addEventListener('dblclick', e => this.handleDblClick(e));
+        this.canvas.addEventListener('contextmenu', e => this.handleContextMenu(e));
+
+        // 触屏事件
+        this.canvas.addEventListener('touchstart', e => this.handleTouchStart(e), {passive:false});
+        this.canvas.addEventListener('touchmove', e => this.handleTouchMove(e), {passive:false});
+        this.canvas.addEventListener('touchend', e => this.handleTouchEnd(e), {passive:false});
+
+        document.querySelectorAll('.component-item').forEach(item => {
+            item.addEventListener('dragstart', e => this.handleComponentDragStart(e));
+            item.addEventListener('dragend', () => this.hideDragIndicator());
+            item.addEventListener('click', e => this.handleComponentLibraryClick(e));
+        });
+        this.canvas.addEventListener('dragover', e => this.handleDragOver(e));
+        this.canvas.addEventListener('drop', e => this.handleDrop(e));
+
+        document.getElementById('select-tool').addEventListener('click', () => this.setTool('select'));
+        document.getElementById('wire-tool').addEventListener('click', () => this.setTool('wire'));
+        document.getElementById('undo-btn').addEventListener('click', () => this.undo());
+        document.getElementById('rotate-btn').addEventListener('click', () => this.rotateSelected());
+        document.getElementById('delete-btn').addEventListener('click', () => this.deleteSelected());
+        document.getElementById('toggle-grid').addEventListener('click', () => this.toggleGrid());
+        document.getElementById('view-toggle').addEventListener('click', () => this.toggleViewMode());
+        document.getElementById('fit-view').addEventListener('click', () => this.fitView(document.getElementById('guide-panel').classList.contains('show') ? 310 : 20));
+        document.getElementById('zoom-in').addEventListener('click', () => this.zoom(0.1));
+        document.getElementById('zoom-out').addEventListener('click', () => this.zoom(-0.1));
+        document.getElementById('input-mode-btn').addEventListener('click', () => this.showInputModeModal());
+        document.getElementById('clear-all').addEventListener('click', () => this.clearAll());
+
+        const menuBtn = document.getElementById('exp-menu-btn');
+        const menu = document.getElementById('exp-menu');
+        menuBtn.addEventListener('click', e => { e.stopPropagation(); menu.classList.toggle('show'); });
+        document.addEventListener('click', () => { menu.classList.remove('show'); this.hideContextMenu(); });
+
+        document.addEventListener('keydown', e => this.handleKeyDown(e));
+
+        document.querySelectorAll('#mode-modal .choice').forEach(choice => {
+            choice.addEventListener('click', () => this.chooseInputMode(choice.dataset.mode));
+        });
+        const savedMode = this.getSavedInputMode();
+        if (savedMode) this.chooseInputMode(savedMode, false);
+        else this.showInputModeModal();
+    }
+
+    setTool(tool) {
+        this.currentTool = tool;
+        this.wireDrawing = false; this.draftWire = null;
+        document.getElementById('select-tool').classList.toggle('active', tool === 'select');
+        document.getElementById('wire-tool').classList.toggle('active', tool === 'wire');
+        this.canvas.style.cursor = tool === 'wire' ? 'crosshair' : 'default';
+        this.draw();
+    }
+
+    snapshotState() {
+        return JSON.stringify({
+            components: this.components,
+            wires: this.wires,
+            idCounter: this.idCounter,
+            viewMode: this.viewMode,
+            panX: this.panX, panY: this.panY, scale: this.scale,
+            activeExperiment: this.activeExperiment,
+            schematicReference: this.schematicReference
+        });
+    }
+
+    saveUndo() {
+        if (this.suppressUndo) return;
+        const snap = this.snapshotState();
+        if (this.undoStack[this.undoStack.length - 1] === snap) return;
+        this.undoStack.push(snap);
+        if (this.undoStack.length > this.maxUndo) this.undoStack.shift();
+    }
+
+    undo() {
+        const snap = this.undoStack.pop();
+        if (!snap) return;
+        const s = JSON.parse(snap);
+        this.components = s.components || [];
+        this.wires = s.wires || [];
+        this.idCounter = s.idCounter || 0;
+        this.viewMode = s.viewMode || 'schematic';
+        this.panX = s.panX ?? 40; this.panY = s.panY ?? 30; this.scale = s.scale ?? 1;
+        this.activeExperiment = s.activeExperiment ?? null;
+        this.schematicReference = s.schematicReference || null;
+        this.selectedComponent = null; this.selectedWire = null; this.wireDrawing = false; this.draftWire = null;
+        this.syncViewButton();
+        this.updateMiniSchematicVisibility();
+        this.updatePropertiesPanel(); this.updateCircuitInfo(); this.recalc();
+    }
+
+    /* ---------- 接线柱几何 ---------- */
+    terminals(comp) {
+        if (this.viewMode === 'schematic') {
+            if (comp.type === 'bulb') return [ {id:'shell', x:-32, y:0}, {id:'tip', x:32, y:0} ];
+            if (comp.type === 'ammeter') return [
+                {id:'r0_6', x:-32, y:0}, {id:'r3', x:-32, y:0}, {id:'neg', x:32, y:0}
+            ];
+            if (comp.type === 'voltmeter') return [
+                {id:'r3', x:-32, y:0}, {id:'r15', x:-32, y:0}, {id:'neg', x:32, y:0}
+            ];
+        } else {
+            if (comp.type === 'ammeter') return [
+                {id:'neg', x:-28, y:48}, {id:'r0_6', x:0, y:48}, {id:'r3', x:28, y:48}
+            ];
+            if (comp.type === 'voltmeter') return [
+                {id:'neg', x:-28, y:48}, {id:'r3', x:0, y:48}, {id:'r15', x:28, y:48}
+            ];
+            if (comp.type === 'potentiometer') return [
+                {id:'a', x:-88, y:24}, {id:'b', x:88, y:24},
+                {id:'c', x:-48, y:-28}, {id:'d', x:48, y:-28}
+            ];
+        }
+        return COMPONENT_DEFS[comp.type].terminals(comp);
+    }
+
+    getAbsoluteTerminals(comp) {
+        const fixedRealMeter = this.viewMode === 'real' && (comp.type === 'ammeter' || comp.type === 'voltmeter');
+        const ang = (fixedRealMeter ? 0 : comp.rotation) * Math.PI / 180;
+        const cos = Math.cos(ang), sin = Math.sin(ang);
+        const base = this.componentPos(comp);
+        return this.terminals(comp).map(t => ({
+            x: base.x + t.x * cos - t.y * sin,
+            y: base.y + t.x * sin + t.y * cos,
+            componentId: comp.id, terminalId: t.id, component: comp
+        }));
+    }
+
+    componentPos(comp) {
+        return (this.viewMode === 'real' && comp.realX !== undefined && comp.realY !== undefined)
+            ? {x: comp.realX, y: comp.realY}
+            : {x: comp.x, y: comp.y};
+    }
+
+    terminalPos(compId, termId) {
+        const comp = this.components.find(c => c.id === compId);
+        if (!comp) return null;
+        const t = this.getAbsoluteTerminals(comp).find(t => t.terminalId === termId);
+        return t ? {x: t.x, y: t.y} : null;
+    }
+
+    findTerminalAt(x, y) {
+        let best = null, bestD = this.snapRadius * this.hitScale;
+        const seen = new Set();
+        for (const comp of this.components) {
+            for (const t of this.getAbsoluteTerminals(comp)) {
+                const sk = comp.id + '_' + Math.round(t.x) + '_' + Math.round(t.y);
+                if (seen.has(sk)) continue;
+                seen.add(sk);
+                const d = Math.hypot(t.x - x, t.y - y);
+                if (d < bestD) { bestD = d; best = t; }
+            }
+        }
+        return best;
+    }
+
+    findComponentAt(x, y) {
+        for (let i = this.components.length - 1; i >= 0; i--) {
+            const c = this.components[i];
+            const p = this.componentPos(c);
+            const r = COMPONENT_DEFS[c.type].selRadius * this.hitScale;
+            if (Math.hypot(p.x - x, p.y - y) < r) return c;
+        }
+        return null;
+    }
+
+    findWireAt(x, y) {
+        const thr = 6 * this.hitScale;
+        for (let i = this.wires.length - 1; i >= 0; i--) {
+            if (!this.wireVisibleInCurrentView(this.wires[i])) continue;
+            const pts = this.viewMode === 'real'
+                ? this.sampleRealWirePath(this.resolveRealWire(this.wires[i]), 10)
+                : this.resolveWire(this.wires[i]);
+            for (let j = 0; j < pts.length - 1; j++) {
+                if (this.distToSeg(x, y, pts[j], pts[j+1]) < thr) return this.wires[i];
+            }
+        }
+        return null;
+    }
+
+    findWireControlPointAt(x, y) {
+        const thr = 9 * this.hitScale;
+        for (let i = this.wires.length - 1; i >= 0; i--) {
+            if (!this.wireVisibleInCurrentView(this.wires[i])) continue;
+            const bends = this.wireControlPoints(this.wires[i]);
+            for (let j = bends.length - 1; j >= 0; j--) {
+                if (Math.hypot(bends[j].x - x, bends[j].y - y) < thr) return {wire:this.wires[i], index:j};
+            }
+        }
+        return null;
+    }
+    distToSeg(px, py, a, b) {
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const len2 = dx*dx + dy*dy;
+        let t = len2 ? ((px-a.x)*dx + (py-a.y)*dy) / len2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        return Math.hypot(px - (a.x+t*dx), py - (a.y+t*dy));
+    }
+
+    isTerminalConnected(comp, termId) {
+        const key = comp.id + '_' + termId;
+        for (const w of this.activeWires()) {
+            if (this.wireEndKey(w, 'start') === key) return true;
+            if (this.wireEndKey(w, 'end') === key) return true;
+        }
+        return false;
+    }
+
+    meterPositiveTerminals(comp) {
+        return comp.type === 'ammeter'
+            ? [{id:'r0_6', range:0.6, label:'0.6'}, {id:'r3', range:3, label:'3'}]
+            : [{id:'r3', range:3, label:'3'}, {id:'r15', range:15, label:'15'}];
+    }
+
+    meterActiveTerminal(comp) {
+        const terms = this.meterPositiveTerminals(comp);
+        const connected = terms.filter(t => this.isTerminalConnected(comp, t.id));
+        const selected = terms.find(t => t.range === comp.range) || terms[0];
+        comp._terminalWarning = '';
+        if (this.viewMode === 'schematic') {
+            comp.range = selected.range;
+            return selected;
+        }
+        if (!this.isTerminalConnected(comp, 'neg')) comp._terminalWarning = '负接线柱未接入电路';
+        if (connected.length === 1) {
+            comp.range = connected[0].range;
+            return connected[0];
+        }
+        if (connected.length > 1) {
+            comp._terminalWarning = '两个量程接线柱同时接入，请只选择一个量程';
+            return selected;
+        }
+        comp._terminalWarning = comp._terminalWarning || '未接入量程接线柱';
+        return selected;
+    }
+
+    meterPositiveKey(comp) { return comp.id + '_' + this.meterActiveTerminal(comp).id; }
+
+    /* ---------- 导线端点解析（跟随接线柱） ---------- */
+    wireEndKey(w, which) {
+        const e = w[which];
+        return (e && e.compId) ? e.compId + '_' + e.termId : null;
+    }
+    wireEndPos(w, which) {
+        const e = w[which];
+        if (e && e.compId) return this.terminalPos(e.compId, e.termId) || {x:e.x||0, y:e.y||0};
+        return {x: e.x, y: e.y};
+    }
+    resolveWire(w) {
+        const pts = [this.wireEndPos(w, 'start')];
+        (w.bends || []).forEach(b => pts.push(b));
+        pts.push(this.wireEndPos(w, 'end'));
+        return pts;
+    }
+
+    wireControlPoints(w, create = false) {
+        if (this.viewMode !== 'real') {
+            if (create && !w.bends) w.bends = [];
+            return w.bends || [];
+        }
+        if (create && !w.realBends) w.realBends = this.resolveRealWire(w).slice(1, -1).map(p => ({x:p.x, y:p.y}));
+        return w.realBends || [];
+    }
+
+    wireVisibleInCurrentView(w) {
+        if (!w.view || w.view === 'both') return true;
+        return w.view === this.viewMode;
+    }
+
+    activeWires() { return this.wires.filter(w => this.wireVisibleInCurrentView(w)); }
+
+    /* ---------- 鼠标坐标转换 ---------- */
+    toWorld(e) {
+        const r = this.canvas.getBoundingClientRect();
+        return {
+            x: (e.clientX - r.left - this.panX) / this.scale,
+            y: (e.clientY - r.top - this.panY) / this.scale
+        };
+    }
+    snap(v) { return Math.round(v / this.gridSize) * this.gridSize; }
+
+    /* ---------- 鼠标事件 ---------- */
+    handleMouseDown(e) {
+        const {x, y} = this.toWorld(e);
+        this.lastMousePos = {x, y};
+        this.hideContextMenu();
+
+        if (e.button === 1 || (e.button === 0 && e.altKey)) {
+            this.isPanning = true;
+            this.lastPanPoint = {x: e.clientX, y: e.clientY};
+            this.canvas.style.cursor = 'grabbing';
+            return;
+        }
+        if (e.button !== 0) return;
+
+        if (this.currentTool === 'select') {
+            const cp = this.findWireControlPointAt(x, y);
+            if (cp) {
+                this.saveUndo();
+                this.draggingControlPoint = cp;
+                this.selectedWire = cp.wire; this.selectedComponent = null;
+                this.updatePropertiesPanel(); this.draw();
+                return;
+            }
+            const comp = this.findComponentAt(x, y);
+            if (comp) {
+                this.selectedComponent = comp; this.selectedWire = null;
+                this.saveUndo();
+                this.dragging = true;
+                const p = this.componentPos(comp);
+                this.dragOffset = {x: x - p.x, y: y - p.y};
+            } else {
+                const wire = this.findWireAt(x, y);
+                this.selectedComponent = null;
+                this.selectedWire = wire;
+            }
+            this.updatePropertiesPanel();
+        } else if (this.currentTool === 'wire') {
+            const term = this.findTerminalAt(x, y);
+            if (!this.wireDrawing) {
+                if (term) {
+                    this.wireDrawing = true;
+                    this.draftWire = { start: {compId: term.componentId, termId: term.terminalId}, bends: [] };
+                    this.draftPos = {x: term.x, y: term.y};
+                }
+            } else {
+                if (term) {
+                    if (term.componentId === this.draftWire.start.compId && term.terminalId === this.draftWire.start.termId) {
+                        this.wireDrawing = false; this.draftWire = null;
+                        this.draw();
+                        return;
+                    }
+                    // 完成一根导线
+                    this.saveUndo();
+                    this.wires.push({
+                        start: this.draftWire.start,
+                        bends: this.draftWire.bends,
+                        view: this.activeExperiment !== null ? this.viewMode : 'both',
+                        end: {compId: term.componentId, termId: term.terminalId}
+                    });
+                    this.wireDrawing = false; this.draftWire = null;
+                    this.updateCircuitInfo();
+                    this.recalc();
+                } else {
+                    // 添加折点
+                    this.draftWire.bends.push({x: this.snap(x), y: this.snap(y)});
+                }
+            }
+        }
+        this.draw();
+    }
+
+    handleMouseMove(e) {
+        const {x, y} = this.toWorld(e);
+        this.lastMousePos = {x, y};
+
+        if (this.isPanning) {
+            this.panX += e.clientX - this.lastPanPoint.x;
+            this.panY += e.clientY - this.lastPanPoint.y;
+            this.lastPanPoint = {x: e.clientX, y: e.clientY};
+            this.draw();
+            return;
+        }
+        if (this.draggingControlPoint) {
+            const p = this.wireControlPoints(this.draggingControlPoint.wire)[this.draggingControlPoint.index];
+            p.x = this.snap(x); p.y = this.snap(y);
+            this.draw();
+            return;
+        }
+        if (this.dragging && this.selectedComponent) {
+            const nx = this.snap(x - this.dragOffset.x), ny = this.snap(y - this.dragOffset.y);
+            if (this.viewMode === 'real') { this.selectedComponent.realX = nx; this.selectedComponent.realY = ny; }
+            else { this.selectedComponent.x = nx; this.selectedComponent.y = ny; }
+            this.recalc();
+            return;
+        }
+        if (this.currentTool === 'wire') {
+            const term = this.findTerminalAt(x, y);
+            this.draftPos = term ? {x: term.x, y: term.y} : {x, y};
+            this.draw();
+        }
+    }
+
+    handleMouseUp(e) {
+        this.dragging = false;
+        this.draggingControlPoint = null;
+        this.isPanning = false;
+        this.canvas.style.cursor = this.currentTool === 'wire' ? 'crosshair' : 'default';
+    }
+
+    handleWheel(e) {
+        e.preventDefault();
+        const r = this.canvas.getBoundingClientRect();
+        const mx = e.clientX - r.left, my = e.clientY - r.top;
+        const factor = e.deltaY < 0 ? 1.1 : 1/1.1;
+        const wx = (mx - this.panX) / this.scale, wy = (my - this.panY) / this.scale;
+        this.scale = Math.min(Math.max(0.5, this.scale * factor), 3);
+        this.panX = mx - wx * this.scale;
+        this.panY = my - wy * this.scale;
+        this.draw();
+    }
+
+    handleDblClick(e) {
+        const {x, y} = this.toWorld(e);
+        const comp = this.findComponentAt(x, y);
+        if (comp && comp.type === 'switch') {
+            this.saveUndo();
+            comp.state = comp.state === 'open' ? 'closed' : 'open';
+            this.selectedComponent = comp;
+            this.updatePropertiesPanel();
+            this.recalc();
+        }
+    }
+
+    /* ---------- 触屏事件 ---------- */
+    synthMouse(touch, button = 0) {
+        return { clientX: touch.clientX, clientY: touch.clientY, button, altKey: false, preventDefault(){} };
+    }
+    pinchInfo(touches) {
+        const a = touches[0], b = touches[1];
+        return {
+            dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+            cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2
+        };
+    }
+    handleTouchStart(e) {
+        e.preventDefault();
+        this.hideContextMenu();
+        if (e.touches.length === 2) {            // 双指缩放/平移
+            this.dragging = false; this.isPanning = false;
+            this.wireDrawing = false; this.draftWire = null;
+            this._pinch = this.pinchInfo(e.touches);
+            return;
+        }
+        this._pinch = null;
+        const now = Date.now();
+        if (this._lastTap && now - this._lastTap < 320) {   // 双击 → 开关通断
+            this._lastTap = 0;
+            this.handleDblClick(this.synthMouse(e.touches[0]));
+            return;
+        }
+        this._lastTap = now;
+        this.handleMouseDown(this.synthMouse(e.touches[0]));
+    }
+    handleTouchMove(e) {
+        e.preventDefault();
+        if (e.touches.length === 2 && this._pinch) {
+            const cur = this.pinchInfo(e.touches), prev = this._pinch;
+            const r = this.canvas.getBoundingClientRect();
+            this.panX += cur.cx - prev.cx; this.panY += cur.cy - prev.cy;   // 平移
+            const mx = cur.cx - r.left, my = cur.cy - r.top;                // 缩放
+            const factor = cur.dist / prev.dist;
+            const wx = (mx - this.panX) / this.scale, wy = (my - this.panY) / this.scale;
+            this.scale = Math.min(Math.max(0.5, this.scale * factor), 3);
+            this.panX = mx - wx * this.scale; this.panY = my - wy * this.scale;
+            this._pinch = cur; this.draw();
+            return;
+        }
+        if (e.touches.length === 1) this.handleMouseMove(this.synthMouse(e.touches[0]));
+    }
+    handleTouchEnd(e) {
+        e.preventDefault();
+        if (e.touches.length < 2) this._pinch = null;
+        if (e.touches.length === 0)
+            this.handleMouseUp(this.synthMouse(e.changedTouches[0] || {clientX:0, clientY:0}));
+    }
+
+    /* ---------- 视图 / 输入模式 ---------- */
+    toggleViewMode() {
+        this.saveUndo();
+        this.viewMode = this.viewMode === 'schematic' ? 'real' : 'schematic';
+        this.syncViewButton();
+        this.updateMiniSchematicVisibility();
+        this.recalc();
+    }
+    syncViewButton() {
+        const btn = document.getElementById('view-toggle');
+        btn.textContent = this.viewMode === 'real' ? '📐 电路图' : '🔌 实物图';
+        btn.classList.toggle('active', this.viewMode === 'real');
+    }
+    updateMiniSchematicVisibility() {
+        const mini = document.getElementById('schematic-mini');
+        if (!mini) return;
+        mini.classList.toggle('show', this.viewMode === 'real' && !!this.schematicReference);
+        if (this.viewMode === 'real' && this.schematicReference) this.drawMiniSchematic();
+    }
+    setInputMode(mode) {
+        this.inputMode = mode;
+        this.hitScale = mode === 'touch' ? 1.7 : 1;
+        this.snapRadius = mode === 'touch' ? 18 : 13;
+        document.body.classList.toggle('touch', mode === 'touch');
+        const btn = document.getElementById('input-mode-btn');
+        if (btn) btn.textContent = mode === 'touch' ? '👆 触屏' : '🖱 鼠标';
+        setTimeout(() => this.resizeCanvas(), 50); // 工具栏高度可能变化
+    }
+
+    getSavedInputMode() {
+        try {
+            const mode = localStorage.getItem('circuit-input-mode');
+            return mode === 'touch' || mode === 'mouse' ? mode : null;
+        } catch { return null; }
+    }
+    showInputModeModal() {
+        const modal = document.getElementById('mode-modal');
+        if (modal) modal.style.display = 'flex';
+    }
+    chooseInputMode(mode, save = true) {
+        if (mode !== 'touch' && mode !== 'mouse') mode = 'mouse';
+        this.setInputMode(mode);
+        if (save) {
+            try { localStorage.setItem('circuit-input-mode', mode); } catch {}
+        }
+        const modal = document.getElementById('mode-modal');
+        if (modal) modal.style.display = 'none';
+    }
+
+    handleContextMenu(e) {
+        e.preventDefault();
+        const {x, y} = this.toWorld(e);
+        this.contextPoint = {x, y};
+        const comp = this.findComponentAt(x, y);
+        const cp = comp ? null : this.findWireControlPointAt(x, y);
+        const wire = comp ? null : this.findWireAt(x, y);
+        if (!comp && !wire) { this.hideContextMenu(); return; }
+        this.selectedComponent = comp; this.selectedWire = wire;
+        this.updatePropertiesPanel();
+        this.draw();
+
+        const menu = document.getElementById('context-menu');
+        let html = '';
+        if (comp) {
+            html += '<div data-act="rotate">↻ 旋转 90°</div>';
+            if (comp.type === 'switch') html += '<div data-act="toggle">⇄ 通断切换</div>';
+        }
+        if (wire) {
+            html += '<div data-act="add-cp">＋ 添加导线控制点</div>';
+            if (cp) html += '<div data-act="del-cp">－ 删除此控制点</div>';
+        }
+        html += '<div data-act="delete">🗑 删除</div>';
+        menu.innerHTML = html;
+        menu.style.left = e.clientX + 'px';
+        menu.style.top = e.clientY + 'px';
+        menu.style.display = 'block';
+        menu.querySelectorAll('div').forEach(d => d.addEventListener('click', () => {
+            const act = d.getAttribute('act') || d.dataset.act;
+            if (act === 'rotate') this.rotateSelected();
+            else if (act === 'delete') this.deleteSelected();
+            else if (act === 'add-cp' && wire) this.addWireControlPoint(wire, this.contextPoint);
+            else if (act === 'del-cp' && cp) this.deleteWireControlPoint(cp);
+            else if (act === 'toggle' && comp) { this.saveUndo(); comp.state = comp.state === 'open' ? 'closed':'open'; this.recalc(); }
+            this.hideContextMenu();
+        }));
+    }
+    hideContextMenu() { document.getElementById('context-menu').style.display = 'none'; }
+
+    addWireControlPoint(wire, p) {
+        this.saveUndo();
+        const bends = this.wireControlPoints(wire, true);
+        bends.push({x:this.snap(p.x), y:this.snap(p.y)});
+        this.selectedWire = wire; this.selectedComponent = null;
+        this.updatePropertiesPanel(); this.draw();
+    }
+
+    deleteWireControlPoint(cp) {
+        if (!cp || !cp.wire) return;
+        const bends = this.wireControlPoints(cp.wire);
+        if (!bends.length) return;
+        this.saveUndo();
+        bends.splice(cp.index, 1);
+        this.selectedWire = cp.wire; this.selectedComponent = null;
+        this.updatePropertiesPanel(); this.draw();
+    }
+
+    handleKeyDown(e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+        if (e.key === 'r' || e.key === 'R') this.rotateSelected();
+        else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); this.deleteSelected(); }
+        else if (e.key === 'Escape') {
+            if (this.wireDrawing) { this.wireDrawing = false; this.draftWire = null; }
+            this.selectedComponent = null; this.selectedWire = null;
+            this.updatePropertiesPanel(); this.draw();
+        }
+    }
+
+    /* ---------- 拖放新建元件 ---------- */
+    componentDataFromItem(item) {
+        return {
+            type: item.getAttribute('data-type'),
+            voltage: item.getAttribute('data-voltage'),
+            resistance: item.getAttribute('data-resistance'),
+            current: item.getAttribute('data-current')
+        };
+    }
+    handleComponentDragStart(e) {
+        const t = e.currentTarget;
+        e.dataTransfer.setData('text/plain', JSON.stringify(this.componentDataFromItem(t)));
+        const ind = document.getElementById('drag-indicator');
+        ind.className = 'drag-indicator visible';
+        ind.textContent = t.querySelector('.lbl').firstChild.textContent;
+    }
+    hideDragIndicator() { document.getElementById('drag-indicator').className = 'drag-indicator'; }
+    handleComponentLibraryClick(e) {
+        const data = this.componentDataFromItem(e.currentTarget);
+        if (!data || !data.type) return;
+        const x = this.snap((this.canvas.width * 0.5 - this.panX) / this.scale);
+        const y = this.snap((this.canvas.height * 0.5 - this.panY) / this.scale);
+        this.createComponent(data.type, {
+            x, y,
+            voltage: data.voltage ? parseFloat(data.voltage) : undefined,
+            resistance: data.resistance ? parseFloat(data.resistance) : undefined,
+            ratedCurrent: data.current ? parseFloat(data.current) : undefined
+        });
+    }
+    handleDragOver(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        const ind = document.getElementById('drag-indicator');
+        ind.style.left = (e.clientX + 12) + 'px';
+        ind.style.top = (e.clientY + 12) + 'px';
+    }
+    handleDrop(e) {
+        e.preventDefault();
+        this.hideDragIndicator();
+        let data;
+        try { data = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
+        if (!data || !data.type) return;
+        const {x, y} = this.toWorld(e);
+        this.createComponent(data.type, {
+            x: this.snap(x), y: this.snap(y),
+            voltage: data.voltage ? parseFloat(data.voltage) : undefined,
+            resistance: data.resistance ? parseFloat(data.resistance) : undefined,
+            ratedCurrent: data.current ? parseFloat(data.current) : undefined
+        });
+    }
+
+    createComponent(type, props = {}) {
+        if (!props.skipUndo) this.saveUndo();
+        const def = COMPONENT_DEFS[type];
+        const comp = {
+            id: 'C' + (this.idCounter++),
+            type, x: props.x ?? 200, y: props.y ?? 150, rotation: 0,
+            ...JSON.parse(JSON.stringify(def.defaults))
+        };
+        // 覆盖外部传入的有效属性
+        ['voltage','resistance','ratedCurrent','position','state','range','rotation']
+            .forEach(k => { if (props[k] !== undefined) comp[k] = props[k]; });
+        this.components.push(comp);
+        this.selectedComponent = comp; this.selectedWire = null;
+        this.updatePropertiesPanel();
+        this.updateCircuitInfo();
+        this.recalc();
+        return comp;
+    }
+
+    rotateSelected() {
+        if (!this.selectedComponent) return;
+        this.saveUndo();
+        this.selectedComponent.rotation = (this.selectedComponent.rotation + 90) % 360;
+        this.recalc();
+    }
+
+    deleteSelected() {
+        this.saveUndo();
+        if (this.selectedComponent) {
+            const id = this.selectedComponent.id;
+            this.components = this.components.filter(c => c.id !== id);
+            this.wires = this.wires.filter(w =>
+                (w.start.compId !== id) && (w.end.compId !== id));
+            this.selectedComponent = null;
+        } else if (this.selectedWire) {
+            this.wires = this.wires.filter(w => w !== this.selectedWire);
+            this.selectedWire = null;
+        }
+        this.updatePropertiesPanel();
+        this.updateCircuitInfo();
+        this.recalc();
+    }
+
+    connectTerminals(cA, tA, cB, tB, bends = [], view = 'schematic') {
+        this.wires.push({ start:{compId:cA.id, termId:tA}, bends, realBends: null, view, end:{compId:cB.id, termId:tB} });
+    }
+
+    connectTerminalsReal(cA, tA, cB, tB, bends = [], realBends = null, view = 'schematic') {
+        this.wires.push({ start:{compId:cA.id, termId:tA}, bends, realBends, view, end:{compId:cB.id, termId:tB} });
+    }
+
+    setTerminalWireFlow(key, value) {
+        const [compId, termId] = key.split('_');
+        const comp = this.components.find(c => c.id === compId);
+        if (!comp || !termId) return;
+        if (!comp._terminalWireFlow) comp._terminalWireFlow = {};
+        comp._terminalWireFlow[termId] = (comp._terminalWireFlow[termId] || 0) + value;
+    }
+
+    connectedWireTerminalFlow(comp, termId) {
+        const key = comp.id + '_' + termId;
+        let flow = 0;
+        this.activeWires().forEach(w => {
+            const s = this.wireEndKey(w, 'start'), e = this.wireEndKey(w, 'end');
+            const mag = w._flowMag || 0;
+            if (mag <= 1e-6) return;
+            if (s === key) flow += (w._flowDir >= 0 ? -mag : mag);
+            if (e === key) flow += (w._flowDir >= 0 ? mag : -mag);
+        });
+        return flow; // 正值：外部导线流入该接线柱；负值：从该接线柱流出到外部导线
+    }
+
+    clearFlow() {
+        this._hasFlow = false;
+        this.wires.forEach(w => { w._flowMag = 0; w._flowDir = 1; });
+        this.components.forEach(c => {
+            c._current = 0;
+            c._potI1 = 0;
+            c._potI2 = 0;
+            c._potFlowSegments = [];
+            c._terminalWireFlow = {};
+        });
+    }
+
+    /* ============================================================
+     *  核心：节点电压法求解（支持串/并/混联）
+     * ============================================================ */
+    solveCircuit() {
+        this.shortCircuit = false;
+        this.clearFlow();
+        if (this.components.length === 0) {
+            document.getElementById('circuit-state').innerHTML = '<p>请从左侧拖入元件开始搭建电路</p>';
+            return;
+        }
+        // 复位读数
+        this.components.forEach(c => {
+            if (c.type === 'voltmeter' || c.type === 'ammeter') c.measurement = 0;
+            if (c.type === 'bulb') { c.current = 0; c.isLit = false; }
+            c._polarityWarning = false;
+            c._current = 0;
+            c._vmCurrent = 0;
+            c._potI1 = 0;
+            c._potI2 = 0;
+            c._potFlowSegments = [];
+            c._terminalWireFlow = {};
+        });
+
+        // —— 1. 并查集并点 ——
+        const parent = {};
+        const find = k => { while (parent[k] !== k) k = parent[k] = parent[parent[k]]; return k; };
+        const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+        const add = k => { if (!(k in parent)) parent[k] = k; };
+
+        this.components.forEach(c => this.terminals(c).forEach(t => add(c.id + '_' + t.id)));
+        this.activeWires().forEach(w => {
+            const s = this.wireEndKey(w, 'start'), e = this.wireEndKey(w, 'end');
+            if (s && e) { add(s); add(e); union(s, e); }
+        });
+        this.components.forEach(c => {
+            if (c.type === 'switch' && c.state === 'closed') union(c.id + '_a', c.id + '_b');
+            if (c.type === 'potentiometer') union(c.id + '_c', c.id + '_d'); // 滑片杆两端相连
+        });
+
+        // —— 2. 编号节点（取一个为地）——
+        const roots = [...new Set(Object.keys(parent).map(find))];
+        if (roots.length === 0) { this.reportState('open'); return; }
+        const ground = roots[0];
+        const idx = {}; let n = 0;
+        roots.forEach(r => { if (r !== ground) idx[r] = n++; });
+        const nodeIdx = key => { const r = find(key); return r === ground ? -1 : idx[r]; };
+
+        // —— 3. 收集电阻支路与电压源 ——
+        const resistors = [];  // {k1,k2,R,comp,split?}
+        const sources = [];    // {kp,kn,E,comp}
+        const R_VM = 1e6;
+        let shorted = false;
+        this.components.forEach(c => {
+            if (c.type === 'resistor' || c.type === 'bulb') {
+                const k1 = c.type === 'bulb' ? c.id+'_shell' : c.id+'_a';
+                const k2 = c.type === 'bulb' ? c.id+'_tip' : c.id+'_b';
+                resistors.push({k1, k2, R:Math.max(c.resistance, 1e-6), comp:c, kind:'series'});
+            } else if (c.type === 'voltmeter') {
+                resistors.push({k1:this.meterPositiveKey(c), k2:c.id+'_neg', R:R_VM, comp:c, kind:'vm'});
+            } else if (c.type === 'potentiometer') {
+                const R = Math.max(c.resistance, 1e-6);
+                const wiper = c.id + '_c'; // c/d 已并点
+                resistors.push({k1:c.id+'_a', k2:wiper, R:Math.max(R*c.position, 0.01), comp:c, kind:'pot1'});
+                resistors.push({k1:wiper, k2:c.id+'_b', R:Math.max(R*(1-c.position), 0.01), comp:c, kind:'pot2'});
+            } else if (c.type === 'battery') {
+                if (find(c.id+'_pos') === find(c.id+'_neg')) shorted = true;
+                sources.push({kp:c.id+'_pos', kn:c.id+'_neg', E:c.voltage, comp:c});
+            } else if (c.type === 'ammeter') {
+                const pk = this.meterPositiveKey(c);
+                if (find(pk) !== find(c.id+'_neg'))
+                    sources.push({kp:pk, kn:c.id+'_neg', E:0, comp:c});
+            }
+        });
+
+        if (shorted) { this.reportState('short'); this.draw(); return; }
+
+        // —— 4. 装配 MNA 矩阵 ——
+        const m = sources.length;
+        const N = n + m;
+        const A = Array.from({length:N}, () => new Array(N).fill(0));
+        const b = new Array(N).fill(0);
+        for (let i = 0; i < n; i++) A[i][i] += 1e-9; // 正则项，避免悬空节点奇异
+
+        resistors.forEach(rb => {
+            const g = 1 / rb.R, p = nodeIdx(rb.k1), q = nodeIdx(rb.k2);
+            if (p >= 0) A[p][p] += g;
+            if (q >= 0) A[q][q] += g;
+            if (p >= 0 && q >= 0) { A[p][q] -= g; A[q][p] -= g; }
+        });
+        sources.forEach((s, si) => {
+            const vi = n + si, p = nodeIdx(s.kp), q = nodeIdx(s.kn);
+            if (p >= 0) { A[p][vi] += 1; A[vi][p] += 1; }
+            if (q >= 0) { A[q][vi] -= 1; A[vi][q] -= 1; }
+            b[vi] += s.E;
+        });
+
+        // —— 5. 求解 ——
+        const x = solveLinear(A, b);
+        const V = key => { const i = nodeIdx(key); return i < 0 ? 0 : (x[i] || 0); };
+
+        // —— 6. 回代各元件 ——
+        resistors.forEach(rb => {
+            const I = (V(rb.k1) - V(rb.k2)) / rb.R; // 由 k1 流向 k2 为正
+            if (rb.kind === 'vm') {
+                rb.comp._vmCurrent = I;
+                rb.comp._current = I;
+            } else if (rb.kind === 'pot1') {
+                rb.comp._potI1 = I;
+            } else if (rb.kind === 'pot2') {
+                rb.comp._potI2 = I;
+            } else {
+                rb.comp._current = I;
+            }
+            if (rb.comp.type === 'bulb') {
+                rb.comp.current = Math.abs(I);
+                rb.comp.isLit = Math.abs(I) > 1e-4;
+            }
+            if (rb.comp.type === 'voltmeter') {
+                // 电压表读数 = V(+) - V(-)
+                rb.comp.measurement = V(this.meterPositiveKey(rb.comp)) - V(rb.comp.id+'_neg');
+            }
+            if (rb.comp.type === 'potentiometer') {
+                rb.comp._current = Math.abs(rb.comp._potI1 || 0) >= Math.abs(rb.comp._potI2 || 0) ? rb.comp._potI1 : rb.comp._potI2;
+            }
+        });
+        this.components.forEach(c => {
+            if (c.type !== 'potentiometer') return;
+            c._potFlowSegments = [];
+            if (Math.abs(c._potI1 || 0) > 1e-6) c._potFlowSegments.push({side:'a', current:c._potI1});
+            if (Math.abs(c._potI2 || 0) > 1e-6) c._potFlowSegments.push({side:'b', current:c._potI2});
+        });
+
+        let mainCurrent = 0;
+        let mainVoltage = (this.components.find(c => c.type === 'battery') || {}).voltage || 0;
+        sources.forEach((s, si) => {
+            const I = x[n + si] || 0; // 由 + 流向 - 经过该支路（内部）为正
+            if (s.comp.type === 'ammeter') {
+                s.comp.measurement = I; // + 柱流入为正
+                s.comp._current = I;
+                s.comp._polarityWarning = I < -1e-5;
+            } else if (s.comp.type === 'battery') {
+                const out = -I; // 电源对外输出电流
+                s.comp._current = out;
+                if (Math.abs(out) > Math.abs(mainCurrent)) { mainCurrent = out; mainVoltage = s.comp.voltage; }
+            }
+        });
+
+        // —— 6b. 计算每根导线的电流方向（用于流动动画）——
+        const termFlow = {};                 // 端子→流出该端子进入导线的电流
+        const addF = (k, v) => { termFlow[k] = (termFlow[k] || 0) + v; };
+        resistors.forEach(rb => {
+            const I = (V(rb.k1) - V(rb.k2)) / rb.R;
+            addF(rb.k1, -I); addF(rb.k2, +I);
+        });
+        sources.forEach((s, si) => {
+            const I = x[n + si] || 0;
+            if (s.comp.type === 'battery') { const out = -I; addF(s.kp, out); addF(s.kn, -out); }
+            else { addF(s.kp, -I); addF(s.kn, +I); }   // 电流表：+→- 内部
+        });
+        // 滑片两个接线柱(c,d)同节点，电流值相同
+        this.components.forEach(c => {
+            if (c.type === 'potentiometer') termFlow[c.id+'_d'] = termFlow[c.id+'_c'] || 0;
+        });
+        const degree = {};
+        this.activeWires().forEach(w => {
+            const s = this.wireEndKey(w,'start'), e = this.wireEndKey(w,'end');
+            if (s) degree[s] = (degree[s]||0)+1;
+            if (e) degree[e] = (degree[e]||0)+1;
+        });
+        this._hasFlow = false;
+        this.activeWires().forEach(w => {
+            const s = this.wireEndKey(w,'start'), e = this.wireEndKey(w,'end');
+            const fS = termFlow[s] || 0, fE = termFlow[e] || 0;
+            const aS = Math.abs(fS), aE = Math.abs(fE);
+            let mag, fdir;
+            if (aS < 1e-9 && aE >= 1e-9) { mag = aE; fdir = fE >= 0 ? -1 : 1; }
+            else if (aE < 1e-9 && aS >= 1e-9) { mag = aS; fdir = fS >= 0 ? 1 : -1; }
+            else if (degree[s] === 1) { mag = aS; fdir = fS >= 0 ? 1 : -1; }
+            else if (degree[e] === 1) { mag = aE; fdir = fE >= 0 ? -1 : 1; }
+            else if (aS >= aE) { mag = aS; fdir = fS >= 0 ? 1 : -1; }
+            else { mag = aE; fdir = fE >= 0 ? -1 : 1; }
+            w._flowMag = mag; w._flowDir = fdir;
+            if (mag > 1e-5) this._hasFlow = true;
+            if (s) this.setTerminalWireFlow(s, fS);
+            if (e) this.setTerminalWireFlow(e, fE);
+        });
+
+        // —— 7. 输出整体测量 ——
+        const I = Math.abs(mainCurrent);
+        if (sources.some(s => s.comp.type === 'battery')) {
+            if (I < 1e-6) { this.clearFlow(); this.reportState('open', mainVoltage); }
+            else {
+                const Rtot = mainVoltage / I;
+                this.reportMeasurements(mainVoltage, I, Rtot);
+                const hasWarning = this.getAmmeterPolarityIssues(false).length > 0;
+                document.getElementById('circuit-state').innerHTML = this.stateWithChecks(
+                    hasWarning
+                        ? '<p class="badge-warn">⚠ 电路已闭合，但电流表接线错误</p>'
+                        : '<p style="color:#2ecc71;font-weight:700;">● 电路闭合，正常工作</p>',
+                    hasWarning ? 'warning' : 'closed'
+                );
+            }
+        } else {
+            this.reportState('nosource');
+        }
+        this.draw();
+    }
+
+    reportMeasurements(U, I, R) {
+        document.getElementById('measurement-results').innerHTML = `
+            <div class="measurement-value"><span>电源电压:</span><span class="value">${U.toFixed(2)} V</span></div>
+            <div class="measurement-value"><span>干路电流:</span><span class="value">${I.toFixed(3)} A</span></div>
+            <div class="measurement-value"><span>总电阻:</span><span class="value">${R.toFixed(1)} Ω</span></div>`;
+    }
+    reportState(kind, U = 0) {
+        this.clearFlow();
+        const sd = document.getElementById('circuit-state');
+        const md = document.getElementById('measurement-results');
+        if (kind === 'short') {
+            sd.innerHTML = this.stateWithChecks('<p class="badge-warn">⚠ 短路！电源两极被导线直接连通</p>', 'short');
+            md.innerHTML = '<div class="measurement-value"><span>电流过大，已停止计算</span></div>';
+        } else if (kind === 'open') {
+            sd.innerHTML = this.stateWithChecks('<p style="color:#f39c12;font-weight:700;">○ 电路断开（开关断开或未接通）</p>', 'open');
+            md.innerHTML = `
+                <div class="measurement-value"><span>电源电压:</span><span class="value">${U.toFixed(2)} V</span></div>
+                <div class="measurement-value"><span>干路电流:</span><span class="value">0 A</span></div>
+                <div class="measurement-value"><span>总电阻:</span><span class="value">∞ Ω</span></div>`;
+        } else if (kind === 'nosource') {
+            sd.innerHTML = this.stateWithChecks('<p>电路中没有电源</p>', 'nosource');
+            md.innerHTML = '<div class="measurement-value"><span>请先放入电源</span></div>';
+        }
+    }
+
+    stateWithChecks(baseHtml, kind) {
+        const issues = this.getAmmeterPolarityIssues(kind === 'open');
+        const openSwitches = this.components.filter(c => c.type === 'switch' && c.state === 'open').length;
+        const floating = this.components.flatMap(c => this.terminals(c).map(t => ({c, t})))
+            .filter(({c, t}) => !this.isTerminalConnected(c, t.id)).length;
+        let html = baseHtml;
+        if (issues.length) {
+            html += `<div style="margin-top:8px;padding:8px;border-radius:6px;background:rgba(231,76,60,.12);color:#e74c3c;font-weight:700;line-height:1.6;">
+                ${issues.map(s => `⚠ ${s}`).join('<br>')}
+            </div>`;
+        }
+        html += `<div style="margin-top:8px;padding:8px;border-radius:6px;background:rgba(52,152,219,.14);line-height:1.7;">
+            <b>闭合开关前检查：</b><br>
+            ① 电源正极 → 开关 → 电流表 <b>0.6/3</b> 量程接线柱 → 用电器 → 电源负极。<br>
+            ② 电流表必须串联，做到 <b>“量程柱进，−柱出”</b>，不能并联在电源或灯泡两端。<br>
+            ③ 电压表要并联在被测元件两端，用 <b>−</b> 与 <b>3/15</b> 两个接线柱。<br>
+            ④ ${openSwitches ? `还有 <b>${openSwitches}</b> 个开关处于断开状态，请确认后再闭合。` : '开关闭合后再观察电流表、电压表读数。'}<br>
+            ⑤ ${floating ? `还有 <b>${floating}</b> 个接线柱未连线，请检查是否漏接。` : '所有接线柱看起来已接入导线。'}
+        </div>`;
+        return html;
+    }
+
+    getAmmeterPolarityIssues(previewOpenSwitches = false) {
+        const issues = [];
+        this.components.forEach(c => {
+            if (c.type === 'ammeter' && c._polarityWarning)
+                issues.push(`电流表反接：应让电流从电流表“0.6/3”量程接线柱流入，从“−”接线柱流出。请交换电流表两端导线。`);
+        });
+        if (previewOpenSwitches) {
+            this.previewAmmeterPolarityIssues().forEach(msg => {
+                if (!issues.includes(msg)) issues.push(msg);
+            });
+        }
+        return issues;
+    }
+
+    previewAmmeterPolarityIssues() {
+        const issues = [];
+        const adj = {};
+        const addNode = k => { if (!adj[k]) adj[k] = []; };
+        const addEdge = (a, b, meta = {}) => {
+            addNode(a); addNode(b);
+            adj[a].push({to:b, ...meta});
+            adj[b].push({to:a, ...meta});
+        };
+        this.components.forEach(c => this.terminals(c).forEach(t => addNode(c.id + '_' + t.id)));
+        this.activeWires().forEach(w => {
+            const s = this.wireEndKey(w, 'start'), e = this.wireEndKey(w, 'end');
+            if (s && e) addEdge(s, e, {kind:'wire'});
+        });
+        this.components.forEach(c => {
+            if (c.type === 'resistor') addEdge(c.id+'_a', c.id+'_b', {kind:c.type});
+            else if (c.type === 'bulb') addEdge(c.id+'_shell', c.id+'_tip', {kind:c.type});
+            else if (c.type === 'switch') addEdge(c.id+'_a', c.id+'_b', {kind:'switch'}); // 预检查时按闭合估算
+            else if (c.type === 'ammeter') addEdge(this.meterPositiveKey(c), c.id+'_neg', {kind:'ammeter', comp:c});
+            else if (c.type === 'potentiometer') {
+                addEdge(c.id+'_c', c.id+'_d', {kind:'pot'});
+                addEdge(c.id+'_a', c.id+'_c', {kind:'pot'});
+                addEdge(c.id+'_b', c.id+'_c', {kind:'pot'});
+            }
+        });
+        const batteries = this.components.filter(c => c.type === 'battery');
+        for (const bat of batteries) {
+            const start = bat.id + '_pos', goal = bat.id + '_neg';
+            const q = [{k:start, path:[]}], seen = new Set([start]);
+            while (q.length) {
+                const cur = q.shift();
+                if (cur.k === goal) {
+                    cur.path.forEach(edge => {
+                        if (edge.kind === 'ammeter' && edge.from === edge.comp.id + '_neg') {
+                            issues.push('闭合开关前预检查：当前连线会让电流从电流表“−”接线柱流入，违反“量程柱进、−柱出”。');
+                        }
+                    });
+                    break;
+                }
+                (adj[cur.k] || []).forEach(edge => {
+                    if (seen.has(edge.to)) return;
+                    seen.add(edge.to);
+                    q.push({k:edge.to, path:cur.path.concat([{...edge, from:cur.k}])});
+                });
+            }
+        }
+        return [...new Set(issues)];
+    }
+
+    recalc() {
+        if (this.simulationRunning) this.solveCircuit();
+        else this.draw();
+        this.updateCircuitInfo();
+    }
+
+    // 电流流动动画循环
+    animate(ts) {
+        if (this._lastTs === undefined) this._lastTs = ts;
+        const dt = Math.min((ts - this._lastTs) / 1000, 0.05);
+        this._lastTs = ts;
+        this.flowPhase += dt;
+        if (this.simulationRunning && this._hasFlow) this.draw();
+        requestAnimationFrame(t => this.animate(t));
+    }
+
+    /* ============================================================
+     *  绘制
+     * ============================================================ */
+    draw() {
+        const ctx = this.ctx;
+        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        ctx.save();
+        ctx.translate(this.panX, this.panY);
+        ctx.scale(this.scale, this.scale);
+
+        if (this.showGrid) this.drawGrid();
+        if (this.viewMode === 'real') {
+            this.components.forEach(c => this.drawComponent(c));
+            this.activeWires().forEach(w => this.drawWire(w, w === this.selectedWire));
+            if (this.wireDrawing && this.draftWire) this.drawDraftWire();
+            this.drawAllTerminals();
+        } else {
+            this.activeWires().forEach(w => this.drawWire(w, w === this.selectedWire));
+            if (this.wireDrawing && this.draftWire) this.drawDraftWire();
+            this.components.forEach(c => this.drawComponent(c));
+            this.drawAllTerminals();
+        }
+        if (this.selectedComponent) this.highlight(this.selectedComponent);
+
+        ctx.restore();
+    }
+
+    drawGrid() {
+        const ctx = this.ctx, g = this.gridSize;
+        const w = this.canvas.width / this.scale, h = this.canvas.height / this.scale;
+        const x0 = -this.panX / this.scale, y0 = -this.panY / this.scale;
+        ctx.strokeStyle = '#e8ecef'; ctx.lineWidth = 1;
+        for (let x = Math.floor(x0/g)*g; x < x0 + w; x += g) {
+            ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y0 + h); ctx.stroke();
+        }
+        for (let y = Math.floor(y0/g)*g; y < y0 + h; y += g) {
+            ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + w, y); ctx.stroke();
+        }
+    }
+
+    drawWire(w, selected) {
+        const ctx = this.ctx;
+        if (this.viewMode === 'real') { this.drawRealWire(w, selected); return; }
+        const pts = this.resolveWire(w);
+        ctx.strokeStyle = selected ? '#e74c3c' : '#222';
+        ctx.lineWidth = selected ? 4 : 3;
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.stroke();
+        // 折点处画节点圆点
+        ctx.fillStyle = '#222';
+        (w.bends || []).forEach(b => { ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, 7); ctx.fill(); });
+        // 电流流动光点动画
+        if (this.simulationRunning && Math.abs(w._flowMag || 0) > 1e-9) this.drawFlow(w, pts);
+        if (selected) this.drawWireControlPoints(w);
+    }
+
+    resolveRealWire(w) {
+        const start = this.wireEndPos(w, 'start');
+        const end = this.wireEndPos(w, 'end');
+        if (w.realBends && w.realBends.length) return [start, ...w.realBends, end];
+        const auto = this.autoRealWirePath(w, start, end);
+        if (auto) return auto;
+        const dx = end.x - start.x, dy = end.y - start.y;
+        const sag = Math.min(45, Math.max(14, Math.hypot(dx, dy) * 0.12));
+        const nx = -dy / (Math.hypot(dx, dy) || 1), ny = dx / (Math.hypot(dx, dy) || 1);
+        const sign = start.x <= end.x ? -1 : 1;
+        return [start, {x:(start.x+end.x)/2 + nx*sag*sign, y:(start.y+end.y)/2 + ny*sag*sign}, end];
+    }
+
+    realComponentBox(comp, pad = 20) {
+        const p = this.componentPos(comp);
+        const sizes = {
+            battery:[86, 62], resistor:[88, 58], bulb:[76, 90], switch:[92, 66],
+            potentiometer:[146, 110], ammeter:[128, 136], voltmeter:[128, 136]
+        };
+        const [w, h] = sizes[comp.type] || [COMPONENT_DEFS[comp.type].selRadius*2, COMPONENT_DEFS[comp.type].selRadius*2];
+        return {left:p.x-w/2-pad, right:p.x+w/2+pad, top:p.y-h/2-pad, bottom:p.y+h/2+pad, comp};
+    }
+
+    pointInBox(p, b) { return p.x >= b.left && p.x <= b.right && p.y >= b.top && p.y <= b.bottom; }
+
+    segmentIntersectsBox(a, c, b) {
+        if (this.pointInBox(a, b) || this.pointInBox(c, b)) return true;
+        const edges = [
+            [{x:b.left,y:b.top},{x:b.right,y:b.top}], [{x:b.right,y:b.top},{x:b.right,y:b.bottom}],
+            [{x:b.right,y:b.bottom},{x:b.left,y:b.bottom}], [{x:b.left,y:b.bottom},{x:b.left,y:b.top}]
+        ];
+        return edges.some(([p, q]) => this.segmentsIntersect(a, c, p, q));
+    }
+
+    segmentsIntersect(a, b, c, d) {
+        const ccw = (p, q, r) => (r.y-p.y)*(q.x-p.x) > (q.y-p.y)*(r.x-p.x);
+        return ccw(a,c,d) !== ccw(b,c,d) && ccw(a,b,c) !== ccw(a,b,d);
+    }
+
+    terminalOutPoint(compId, termId, pos, dist = 58) {
+        const comp = this.components.find(c => c.id === compId);
+        if (!comp) return pos;
+        const box = this.realComponentBox(comp, 6);
+        if (this.viewMode === 'real') {
+            const sideByType = {
+                ammeter: {neg:'left', r0_6:'bottom', r3:'right'},
+                voltmeter: {neg:'left', r3:'bottom', r15:'right'},
+                bulb: {shell:'left', tip:'bottom'},
+                potentiometer: {a:'left', b:'right', c:'left', d:'right'},
+                switch: {a:'left', b:'right'},
+                battery: {pos:'left', neg:'right'},
+                resistor: {a:'left', b:'right'}
+            };
+            const side = sideByType[comp.type] && sideByType[comp.type][termId];
+            if (side === 'left') return {x:this.snap(box.left-dist), y:this.snap(pos.y)};
+            if (side === 'right') return {x:this.snap(box.right+dist), y:this.snap(pos.y)};
+            if (side === 'top') return {x:this.snap(pos.x), y:this.snap(box.top-dist)};
+            if (side === 'bottom') return {x:this.snap(pos.x), y:this.snap(box.bottom+dist)};
+        }
+        const sides = [
+            {d:Math.abs(pos.x-box.left), x:box.left-dist, y:pos.y},
+            {d:Math.abs(pos.x-box.right), x:box.right+dist, y:pos.y},
+            {d:Math.abs(pos.y-box.top), x:pos.x, y:box.top-dist},
+            {d:Math.abs(pos.y-box.bottom), x:pos.x, y:box.bottom+dist}
+        ];
+        const best = sides.sort((a, b) => a.d - b.d)[0];
+        return {x:this.snap(best.x), y:this.snap(best.y)};
+    }
+
+    autoRealWirePath(w, start, end) {
+        const sc = this.components.find(c => c.id === w.start.compId);
+        const ec = this.components.find(c => c.id === w.end.compId);
+        if (!sc || !ec) return null;
+        const outS = this.terminalOutPoint(w.start.compId, w.start.termId, start);
+        const outE = this.terminalOutPoint(w.end.compId, w.end.termId, end);
+        const boxes = this.components.filter(c => c !== sc && c !== ec).map(c => this.realComponentBox(c, 22));
+        const allBoxes = this.components.map(c => this.realComponentBox(c, 10));
+        const minX = Math.min(start.x, end.x, outS.x, outE.x) - 110;
+        const maxX = Math.max(start.x, end.x, outS.x, outE.x) + 110;
+        const minY = Math.min(start.y, end.y, outS.y, outE.y) - 110;
+        const maxY = Math.max(start.y, end.y, outS.y, outE.y) + 110;
+        const candidates = [
+            [start, outS, {x:outS.x, y:outE.y}, outE, end],
+            [start, outS, {x:outE.x, y:outS.y}, outE, end],
+            [start, outS, {x:minX, y:outS.y}, {x:minX, y:outE.y}, outE, end],
+            [start, outS, {x:maxX, y:outS.y}, {x:maxX, y:outE.y}, outE, end],
+            [start, outS, {x:outS.x, y:minY}, {x:outE.x, y:minY}, outE, end],
+            [start, outS, {x:outS.x, y:maxY}, {x:outE.x, y:maxY}, outE, end]
+        ];
+        const score = pts => {
+            let s = 0;
+            for (let i = 1; i < pts.length; i++) {
+                s += Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
+                boxes.forEach(b => { if (this.segmentIntersectsBox(pts[i-1], pts[i], b)) s += 20000; });
+                allBoxes.forEach(b => { if (this.segmentIntersectsBox(pts[i-1], pts[i], b)) s += 1200; });
+            }
+            return s;
+        };
+        return candidates.map(pts => ({pts, s:score(pts)})).sort((a, b) => a.s - b.s)[0].pts;
+    }
+
+    sampleRealWirePath(pts, stepsPerCurve = 18) {
+        if (pts.length <= 2) return pts;
+        const out = [pts[0]];
+        let cur = pts[0];
+        for (let i = 1; i < pts.length; i++) {
+            const ctrl = pts[i], next = pts[i+1];
+            if (next) {
+                const end = {x:(ctrl.x + next.x)/2, y:(ctrl.y + next.y)/2};
+                for (let s = 1; s <= stepsPerCurve; s++) {
+                    const t = s / stepsPerCurve, u = 1 - t;
+                    out.push({x:u*u*cur.x + 2*u*t*ctrl.x + t*t*end.x, y:u*u*cur.y + 2*u*t*ctrl.y + t*t*end.y});
+                }
+                cur = end;
+            } else {
+                out.push(ctrl);
+            }
+        }
+        return out;
+    }
+
+    drawRealWire(w, selected) {
+        const ctx = this.ctx;
+        const pts = this.resolveRealWire(w);
+        ctx.save();
+        ctx.strokeStyle = selected ? '#e74c3c' : '#d39a4b';
+        ctx.lineWidth = selected ? 5 : 4;
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) {
+            const prev = pts[i-1], cur = pts[i], next = pts[i+1];
+            if (next) {
+                const mx = (cur.x + next.x) / 2, my = (cur.y + next.y) / 2;
+                ctx.quadraticCurveTo(cur.x, cur.y, mx, my);
+            } else {
+                ctx.lineTo(cur.x, cur.y);
+            }
+        }
+        ctx.stroke();
+        ctx.restore();
+        if (this.simulationRunning && Math.abs(w._flowMag || 0) > 1e-9) this.drawFlow(w, this.sampleRealWirePath(pts));
+        if (selected) this.drawWireControlPoints(w);
+    }
+
+    drawWireControlPoints(w) {
+        const bends = this.wireControlPoints(w, this.viewMode === 'real');
+        if (!bends.length) return;
+        const ctx = this.ctx;
+        ctx.save();
+        bends.forEach(p => {
+            ctx.fillStyle = '#fff8e1'; ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, 7); ctx.fill(); ctx.stroke();
+        });
+        ctx.restore();
+    }
+
+    drawFlow(w, pts) {
+        const ctx = this.ctx;
+        // 累计每段长度
+        const segLen = [], cum = [0];
+        let total = 0;
+        for (let i = 1; i < pts.length; i++) {
+            const L = Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+            segLen.push(L); total += L; cum.push(total);
+        }
+        if (total < 1) return;
+        const spacing = 24;
+        const speed = 55;                                  // 像素/秒
+        let off = (this.flowPhase * speed) % spacing;
+        const dir = w._flowDir >= 0 ? 1 : -1;
+        // dir>0: start→end（off 增大向末端移动）；dir<0 反向
+        const ptAt = d => {
+            d = ((d % total) + total) % total;
+            for (let i = 1; i < pts.length; i++) {
+                if (d <= cum[i]) {
+                    const t = (d - cum[i-1]) / (segLen[i-1] || 1);
+                    return { x: pts[i-1].x + (pts[i].x - pts[i-1].x) * t,
+                             y: pts[i-1].y + (pts[i].y - pts[i-1].y) * t };
+                }
+            }
+            return pts[pts.length - 1];
+        };
+        ctx.fillStyle = '#f1c40f';
+        ctx.shadowColor = '#f39c12'; ctx.shadowBlur = 6;
+        for (let d = off; d < total; d += spacing) {
+            const p = ptAt(dir > 0 ? d : total - d);
+            ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, 7); ctx.fill();
+        }
+        ctx.shadowBlur = 0;
+    }
+
+    drawFlowDotsOnPolyline(pts, spacing = 24, speed = 55, radius = 3) {
+        const ctx = this.ctx;
+        const segLen = [], cum = [0];
+        let total = 0;
+        for (let i = 1; i < pts.length; i++) {
+            const L = Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+            segLen.push(L); total += L; cum.push(total);
+        }
+        if (total < 1) return;
+        const ptAt = d => {
+            d = ((d % total) + total) % total;
+            for (let i = 1; i < pts.length; i++) {
+                if (d <= cum[i]) {
+                    const t = (d - cum[i-1]) / (segLen[i-1] || 1);
+                    return {x:pts[i-1].x + (pts[i].x - pts[i-1].x)*t, y:pts[i-1].y + (pts[i].y - pts[i-1].y)*t};
+                }
+            }
+            return pts[pts.length - 1];
+        };
+        for (let d = (this.flowPhase * speed) % spacing; d < total; d += spacing) {
+            const p = ptAt(d);
+            ctx.beginPath(); ctx.arc(p.x, p.y, radius, 0, 7); ctx.fill();
+        }
+    }
+
+    drawDraftWire() {
+        const ctx = this.ctx;
+        const start = this.terminalPos(this.draftWire.start.compId, this.draftWire.start.termId);
+        const pts = [start, ...this.draftWire.bends, this.draftPos];
+        ctx.strokeStyle = '#3498db'; ctx.lineWidth = 3; ctx.setLineDash([6,4]);
+        ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.stroke(); ctx.setLineDash([]);
+    }
+
+    drawComponent(comp) {
+        const ctx = this.ctx;
+        ctx.save();
+        const pos = this.componentPos(comp);
+        ctx.translate(pos.x, pos.y);
+        if (!(this.viewMode === 'real' && (comp.type === 'ammeter' || comp.type === 'voltmeter')))
+            ctx.rotate(comp.rotation * Math.PI / 180);
+        ctx.lineWidth = 2; ctx.strokeStyle = '#222'; ctx.fillStyle = '#222';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        const base = {
+            battery:'Battery', resistor:'Resistor', bulb:'Bulb', switch:'Switch',
+            potentiometer:'Potentiometer', ammeter:'Ammeter', voltmeter:'Voltmeter'
+        }[comp.type];
+        if (base) {
+            const realFn = 'draw' + base + 'Real';
+            const fn = (this.viewMode === 'real' && this[realFn]) ? realFn : 'draw' + base;
+            this[fn](comp);
+        }
+        // 电流方向箭头（电路图模式）
+        if (this.viewMode === 'schematic' && this.simulationRunning &&
+            (comp.type==='resistor'||comp.type==='bulb'||comp.type==='potentiometer'||comp.type==='voltmeter') && Math.abs(comp._current) > 1e-9)
+            this.drawCurrentArrow(comp);
+        ctx.restore();
+    }
+
+    // 始终水平的文字标签
+    label(comp, text, lx, ly, opts = {}) {
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.translate(lx, ly);
+        ctx.rotate(-comp.rotation * Math.PI / 180);
+        ctx.fillStyle = opts.color || '#333';
+        ctx.font = opts.font || '12px "Microsoft YaHei"';
+        ctx.fillText(text, 0, 0);
+        ctx.restore();
+    }
+
+    drawCurrentArrow(comp) {
+        const ctx = this.ctx;
+        const dir = comp._current >= 0 ? 1 : -1; // a→b 为正
+        if (comp.type === 'bulb') return;
+        ctx.save();
+        ctx.fillStyle = '#e74c3c';
+        let ax = 14 * dir, ay = -22;
+        if (comp.type === 'potentiometer') {
+            ax = (-34 + 68 * (comp.position || 0.5)); ay = 2;
+            const down = (comp._potI1 || comp._potI2 || comp._current) >= 0 ? 1 : -1;
+            ctx.beginPath();
+            ctx.moveTo(ax, ay + 11*down); ctx.lineTo(ax - 6, ay + 1*down); ctx.lineTo(ax + 6, ay + 1*down);
+            ctx.closePath(); ctx.fill(); ctx.restore(); return;
+        }
+        if (comp.type === 'voltmeter') { ax = 0; ay = -30; }
+        ctx.beginPath();
+        ctx.moveTo(ax, ay); ctx.lineTo(ax - 8*dir, ay - 4); ctx.lineTo(ax - 8*dir, ay + 4);
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
+    }
+
+    drawBattery(comp) {
+        const ctx = this.ctx;
+        ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-10,0); ctx.moveTo(10,0); ctx.lineTo(32,0); ctx.stroke();
+        ctx.lineWidth = 2.4;
+        ctx.beginPath(); ctx.moveTo(-10,-18); ctx.lineTo(-10,18); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(10,-11); ctx.lineTo(10,11); ctx.stroke();
+        ctx.lineWidth = 2;
+        this.label(comp, '+', -18, -20, {color:'#e74c3c', font:'bold 15px Arial'});
+        this.label(comp, '−', 18, -20, {color:'#2980b9', font:'bold 15px Arial'});
+        this.label(comp, comp.voltage + 'V', 0, 28, {color:'#2c3e50', font:'bold 13px "Microsoft YaHei"'});
+    }
+
+    drawResistor(comp) {
+        const ctx = this.ctx;
+        ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-22,0); ctx.moveTo(22,0); ctx.lineTo(32,0); ctx.stroke();
+        ctx.fillStyle = '#fff'; ctx.fillRect(-22,-8,44,16);
+        ctx.strokeRect(-22,-9,44,18);
+        this.label(comp, comp.resistance + 'Ω', 0, 24, {font:'italic bold 13px Georgia', color:'#2c3e50'});
+    }
+
+    drawBulb(comp) {
+        const ctx = this.ctx;
+        ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-14,0); ctx.moveTo(14,0); ctx.lineTo(32,0); ctx.stroke();
+        // 发光
+        if (this.simulationRunning && comp.isLit) {
+            const ratio = comp.current / (comp.ratedCurrent || 0.3);
+            const brightness = Math.min(1.6, Math.sqrt(Math.max(ratio, 0)));
+            let color = ratio < 0.35 ? '#ffe9a8' : ratio < 0.75 ? '#ffd54f' : ratio < 1.05 ? '#ffb300' : '#ff5722';
+            const grad = ctx.createRadialGradient(0,0,2,0,0,18 + brightness * 10);
+            grad.addColorStop(0, '#fffdf0');
+            grad.addColorStop(0.45, color);
+            grad.addColorStop(1, `rgba(255,193,7,${0.18 + Math.min(brightness, 1) * 0.25})`);
+            ctx.fillStyle = grad;
+            ctx.shadowColor = color; ctx.shadowBlur = 8 + brightness * 26;
+        } else { ctx.fillStyle = '#f5f5f5'; }
+        ctx.beginPath(); ctx.arc(0,0,12,0,7); ctx.fill(); ctx.shadowBlur = 0;
+        ctx.beginPath(); ctx.arc(0,0,12,0,7); ctx.stroke();
+        // X
+        const d = 12 * Math.SQRT1_2;
+        ctx.beginPath(); ctx.moveTo(-d,-d); ctx.lineTo(d,d); ctx.moveTo(d,-d); ctx.lineTo(-d,d); ctx.stroke();
+        let txt = '灯泡';
+        if (this.simulationRunning && comp.isLit && comp.current > (comp.ratedCurrent||0.3)*1.05) txt = '灯泡(过载!)';
+        this.label(comp, txt, 0, 28, {font:'12px "Microsoft YaHei"', color: txt.includes('过载')?'#e74c3c':'#333'});
+        if (this.simulationRunning && comp.current > 1e-4)
+            this.label(comp, comp.current.toFixed(2)+'A', 0, 42, {font:'11px Arial', color:'#7f8c8d'});
+    }
+
+    drawSwitch(comp) {
+        const ctx = this.ctx;
+        ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-18,0); ctx.moveTo(18,0); ctx.lineTo(32,0); ctx.stroke();
+        ctx.fillStyle = '#222';
+        ctx.beginPath(); ctx.arc(-18,0,3.5,0,7); ctx.fill();
+        ctx.beginPath(); ctx.arc(18,0,3.5,0,7); ctx.fill();
+        ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(-18,0);
+        if (comp.state === 'closed') ctx.lineTo(18,0);
+        else ctx.lineTo(14,-17);
+        ctx.stroke(); ctx.lineWidth = 2;
+        this.label(comp, comp.state === 'closed' ? '开关(闭合)' : '开关(断开)', 0, 24,
+            {font:'12px "Microsoft YaHei"', color: comp.state==='closed'?'#2ecc71':'#7f8c8d'});
+    }
+
+    drawPotentiometer(comp) {
+        const ctx = this.ctx;
+        ctx.beginPath(); ctx.moveTo(-48,-28); ctx.lineTo(48,-28); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-48,24); ctx.lineTo(-34,24); ctx.moveTo(34,24); ctx.lineTo(48,24); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(-34,24);
+        for (let i = 0; i < 12; i++) {
+            const x1 = -34 + i * 68 / 12;
+            const x2 = -34 + (i + 0.5) * 68 / 12;
+            const x3 = -34 + (i + 1) * 68 / 12;
+            ctx.quadraticCurveTo(x2, i % 2 ? 18 : 30, x3, 24);
+        }
+        ctx.stroke();
+        const wx = -34 + 68 * comp.position;
+        ctx.lineWidth = 2.2;
+        ctx.beginPath(); ctx.moveTo(wx,-28); ctx.lineTo(wx,10); ctx.stroke();
+        ctx.fillStyle = '#222';
+        ctx.beginPath(); ctx.moveTo(wx,10); ctx.lineTo(wx-7,0); ctx.lineTo(wx+7,0); ctx.closePath(); ctx.fill();
+        this.label(comp, 'A', -48, 40, {font:'italic bold 13px Georgia'});
+        this.label(comp, 'B', 48, 40, {font:'italic bold 13px Georgia'});
+        this.label(comp, 'C', -48, -42, {font:'italic bold 13px Georgia'});
+        this.label(comp, 'D', 48, -42, {font:'italic bold 13px Georgia'});
+        this.label(comp, 'P', wx + 12, 2, {font:'italic bold 15px Georgia', color:'#2c3e50'});
+        this.label(comp, '滑动变阻器', 0, 55, {font:'12px "Microsoft YaHei"'});
+        if (this.simulationRunning && Math.abs(comp._current || 0) > 1e-9)
+            this.label(comp, Math.abs(comp._current).toFixed(2)+'A', 0, -56, {font:'bold 12px Arial', color:'#16a085'});
+    }
+
+    drawMeter(comp, letter) {
+        const ctx = this.ctx;
+        this.meterActiveTerminal(comp);
+        if (comp._polarityWarning) {
+            ctx.save();
+            ctx.strokeStyle = '#e74c3c'; ctx.lineWidth = 3; ctx.setLineDash([4,3]);
+            ctx.beginPath(); ctx.arc(0,0,24,0,7); ctx.stroke();
+            ctx.setLineDash([]); ctx.restore();
+        }
+        ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-18,0); ctx.moveTo(18,0); ctx.lineTo(32,0); ctx.stroke();
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0,0,18,0,7); ctx.fill();
+        ctx.beginPath(); ctx.arc(0,0,18,0,7); ctx.stroke();
+        const range = comp.range;
+        const over = Math.abs(comp.measurement) > range;
+        ctx.fillStyle = '#2c3e50';
+        this.label(comp, letter, 0, 2, {font:'bold 20px Georgia', color:'#2c3e50'});
+        this.label(comp, '+', -24, -12, {font:'bold 12px Arial', color:'#e74c3c'});
+        this.label(comp, '−', 24, -12, {font:'bold 12px Arial', color:'#2980b9'});
+        if (this.simulationRunning) {
+            const val = letter === 'A' ? comp.measurement.toFixed(2)+'A' : comp.measurement.toFixed(2)+'V';
+            const text = comp._polarityWarning ? '反接!' : (over ? '超量程!' : val);
+            this.label(comp, text, 0, -30,
+                {font:'bold 12px "Microsoft YaHei"', color: (over || comp._polarityWarning) ? '#e74c3c' : '#16a085'});
+            if (letter === 'V') this.label(comp, 'I≈'+Math.abs(comp._vmCurrent || 0).toExponential(1)+'A', 0, 34,
+                {font:'10px Arial', color:'#7f8c8d'});
+        }
+    }
+    drawAmmeter(comp) { this.drawMeter(comp, 'A'); }
+    drawVoltmeter(comp) { this.drawMeter(comp, 'V'); }
+
+    drawBatteryReal(comp) {
+        const ctx = this.ctx;
+        ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-25,0); ctx.moveTo(25,0); ctx.lineTo(32,0); ctx.stroke();
+        const body = ctx.createLinearGradient(-24,-14,24,14);
+        body.addColorStop(0, '#fff5c7'); body.addColorStop(0.45, '#e8bd46'); body.addColorStop(1, '#b68624');
+        ctx.fillStyle = body;
+        ctx.fillRect(-24,-14,48,28); ctx.strokeRect(-24,-14,48,28);
+        ctx.fillStyle = '#e74c3c'; ctx.beginPath(); ctx.arc(-12,0,8,0,7); ctx.fill();
+        this.label(comp, '+', -12, 0, {font:'bold 18px Arial', color:'#fff'});
+        ctx.fillStyle = '#bdc3c7'; ctx.fillRect(24,-8,5,16); ctx.strokeRect(24,-8,5,16);
+        this.label(comp, comp.voltage + 'V', 0, 27, {font:'bold 12px "Microsoft YaHei"'});
+    }
+
+    drawResistorReal(comp) {
+        const ctx = this.ctx;
+        ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-22,0); ctx.moveTo(22,0); ctx.lineTo(32,0); ctx.stroke();
+        const grad = ctx.createLinearGradient(-22,-8,22,8);
+        grad.addColorStop(0, '#d7a86e'); grad.addColorStop(0.5, '#f2c184'); grad.addColorStop(1, '#b97b45');
+        ctx.fillStyle = grad; ctx.fillRect(-22,-8,44,16); ctx.strokeRect(-22,-8,44,16);
+        ['#8e44ad','#e74c3c','#f1c40f'].forEach((color, i) => {
+            ctx.fillStyle = color; ctx.fillRect(-12 + i*10, -8, 3, 16);
+        });
+        this.label(comp, comp.resistance + 'Ω', 0, 24, {font:'bold 12px "Microsoft YaHei"'});
+    }
+
+    drawBulbReal(comp) {
+        const ctx = this.ctx;
+        ctx.beginPath(); ctx.moveTo(-22,10); ctx.lineTo(-12,4); ctx.moveTo(0,28); ctx.lineTo(0,19); ctx.stroke();
+        if (this.simulationRunning && comp.isLit) {
+            const ratio = comp.current / (comp.ratedCurrent || 0.3);
+            const brightness = Math.min(1.6, Math.sqrt(Math.max(ratio, 0)));
+            const color = ratio < 0.35 ? '#ffe9a8' : ratio < 0.75 ? '#ffd54f' : ratio < 1 ? '#ffb300' : '#ff5722';
+            const glow = ctx.createRadialGradient(0,-4,2,0,-4,24 + brightness * 13);
+            glow.addColorStop(0, '#fffdf0');
+            glow.addColorStop(0.45, color);
+            glow.addColorStop(1, `rgba(255,193,7,${0.18 + Math.min(brightness, 1) * 0.3})`);
+            ctx.fillStyle = glow; ctx.shadowColor = color; ctx.shadowBlur = 10 + brightness * 28;
+        } else {
+            ctx.fillStyle = '#ecf0f1';
+        }
+        ctx.beginPath(); ctx.arc(0,-10,17,0,7); ctx.fill(); ctx.shadowBlur = 0; ctx.stroke();
+        ctx.strokeStyle = '#f39c12'; ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(-5,-8); ctx.lineTo(-2,-2); ctx.lineTo(2,-8); ctx.lineTo(5,-2); ctx.stroke();
+        ctx.strokeStyle = '#222'; ctx.lineWidth = 2;
+        const shell = ctx.createLinearGradient(-11,5,11,23);
+        shell.addColorStop(0, '#dfe6e9'); shell.addColorStop(1, '#7f8c8d');
+        ctx.fillStyle = shell; ctx.fillRect(-11,5,22,18); ctx.strokeRect(-11,5,22,18);
+        for (let y = 8; y <= 19; y += 4) { ctx.beginPath(); ctx.moveTo(-10,y); ctx.lineTo(10,y+2); ctx.stroke(); }
+        ctx.fillStyle = '#555'; ctx.beginPath(); ctx.arc(0,28,4,0,7); ctx.fill(); ctx.stroke();
+        this.label(comp, '侧壳', -28, 25, {font:'10px "Microsoft YaHei"', color:'#7f8c8d'});
+        this.label(comp, '底触点', 20, 32, {font:'10px "Microsoft YaHei"', color:'#7f8c8d'});
+        this.label(comp, '小灯泡', 0, 45, {font:'12px "Microsoft YaHei"'});
+    }
+
+    drawSwitchReal(comp) {
+        const ctx = this.ctx;
+        ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-18,0); ctx.moveTo(18,0); ctx.lineTo(32,0); ctx.stroke();
+        ctx.fillStyle = '#b8c7d6'; ctx.fillRect(-28,2,56,16); ctx.strokeRect(-28,2,56,16);
+        ctx.fillStyle = '#c0392b';
+        ctx.beginPath(); ctx.arc(-18,0,5,0,7); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.arc(18,0,5,0,7); ctx.fill(); ctx.stroke();
+        ctx.strokeStyle = '#6c7a89'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(-18,-2);
+        if (comp.state === 'closed') ctx.lineTo(18,-2);
+        else ctx.lineTo(10,-18);
+        ctx.stroke(); ctx.lineCap = 'round'; ctx.strokeStyle = '#222'; ctx.lineWidth = 2;
+        this.label(comp, comp.state === 'closed' ? '闭合' : '断开', 0, 25,
+            {font:'12px "Microsoft YaHei"', color: comp.state==='closed'?'#2ecc71':'#7f8c8d'});
+    }
+
+    drawPotentiometerReal(comp) {
+        const ctx = this.ctx;
+        const left = -78, right = 78, coilY = 2;
+        const wx = left + (right-left) * comp.position;
+        ctx.fillStyle = '#b7c0ca'; ctx.fillRect(left-28,32,12,38); ctx.strokeRect(left-28,32,12,38);
+        ctx.fillRect(right+16,32,12,38); ctx.strokeRect(right+16,32,12,38);
+        ctx.fillStyle = '#d8dee6'; ctx.fillRect(left-24,-16,28,56); ctx.strokeRect(left-24,-16,28,56);
+        ctx.fillRect(right-4,-16,28,56); ctx.strokeRect(right-4,-16,28,56);
+        ctx.strokeStyle = '#95a5a6'; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(left-18,-24); ctx.lineTo(right+18,-24); ctx.stroke();
+        ctx.strokeStyle = '#bdc3c7'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(left-18,-36); ctx.lineTo(right+18,-36); ctx.stroke();
+        const body = ctx.createLinearGradient(left,-12,right,18);
+        body.addColorStop(0, '#363636'); body.addColorStop(0.5, '#111'); body.addColorStop(1, '#4a4a4a');
+        ctx.fillStyle = body; ctx.fillRect(left,-12,right-left,30); ctx.strokeRect(left,-12,right-left,30);
+        ctx.strokeStyle = '#c0c7ce'; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(left,3,9,0,7); ctx.stroke();
+        ctx.beginPath(); ctx.arc(right,3,9,0,7); ctx.stroke();
+        ctx.strokeStyle = '#2b2b2b'; ctx.lineWidth = 0.7;
+        for (let x = left+3; x < right; x += 3) { ctx.beginPath(); ctx.moveTo(x,-12); ctx.lineTo(x-5,18); ctx.stroke(); }
+        const flowSegments = comp._potFlowSegments || [];
+        const topOut = this.isTerminalConnected(comp, 'c') ? -48 : (this.isTerminalConnected(comp, 'd') ? 48 : null);
+        const cWireFlow = this.connectedWireTerminalFlow(comp, 'c');
+        const dWireFlow = this.connectedWireTerminalFlow(comp, 'd');
+        if (this.simulationRunning && flowSegments.length) {
+            ctx.save();
+            ctx.strokeStyle = '#f1c40f'; ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            ctx.shadowColor = '#f39c12'; ctx.shadowBlur = 10; ctx.fillStyle = '#fff176';
+            flowSegments.forEach(seg => {
+                const endX = seg.side === 'a' ? left : right;
+                const terminalY = 24;
+                let pts;
+                if (topOut !== null) {
+                    pts = seg.current >= 0
+                        ? [{x:endX,y:terminalY},{x:endX,y:coilY},{x:wx,y:coilY},{x:wx,y:-36},{x:topOut,y:-36}]
+                        : [{x:topOut,y:-36},{x:wx,y:-36},{x:wx,y:coilY},{x:endX,y:coilY},{x:endX,y:terminalY}];
+                } else {
+                    pts = seg.current >= 0
+                        ? [{x:endX,y:terminalY},{x:endX,y:coilY},{x:wx,y:coilY}]
+                        : [{x:wx,y:coilY},{x:endX,y:coilY},{x:endX,y:terminalY}];
+                }
+                ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+                for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+                ctx.stroke();
+                this.drawFlowDotsOnPolyline(pts, 24, 70, 3.5);
+            });
+            ctx.restore();
+        }
+        let cdFlow = 0;
+        if (Math.abs(cWireFlow) > 1e-6 && Math.abs(dWireFlow) > 1e-6) {
+            cdFlow = cWireFlow > 0 ? 1 : -1; // 正值画 C→D，负值画 D→C
+        }
+        if (this.simulationRunning && !flowSegments.length && Math.abs(cdFlow) > 1e-6) {
+            const pts = cdFlow >= 0 ? [{x:-48,y:-36},{x:48,y:-36}] : [{x:48,y:-36},{x:-48,y:-36}];
+            ctx.save();
+            ctx.strokeStyle = '#f1c40f'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+            ctx.shadowColor = '#f39c12'; ctx.shadowBlur = 10; ctx.fillStyle = '#fff176';
+            ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(pts[1].x, pts[1].y); ctx.stroke();
+            this.drawFlowDotsOnPolyline(pts, 24, 70, 3.5);
+            ctx.restore();
+        }
+        ctx.fillStyle = '#b87333'; ctx.fillRect(wx-9,-58,18,44); ctx.strokeRect(wx-9,-58,18,44);
+        ctx.beginPath(); ctx.moveTo(wx,-14); ctx.lineTo(wx-7,6); ctx.lineTo(wx+7,6); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#2c3e50'; ctx.fillRect(wx-26,-76,52,20); ctx.strokeRect(wx-26,-76,52,20);
+        this.label(comp, '滑片P', wx, -66, {font:'bold 10px "Microsoft YaHei"', color:'#fff'});
+        ctx.strokeStyle = '#b87333'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(wx,-36); ctx.lineTo(wx,coilY); ctx.stroke();
+        ctx.strokeStyle = '#222'; ctx.lineWidth = 2; ctx.fillStyle = '#c0392b';
+        [[-88,24,'A'],[88,24,'B'],[-48,-28,'C'],[48,-28,'D']].forEach(([px,py,lbl])=>{
+            ctx.beginPath(); ctx.arc(px,py,5,0,7); ctx.fill(); ctx.stroke();
+            this.label(comp, lbl, px, py + (py > 0 ? 17 : -16), {font:'italic bold 12px Georgia'});
+        });
+        if (this.simulationRunning && (flowSegments.length || Math.abs(cdFlow) > 1e-6))
+            this.label(comp, Math.max(Math.abs(comp._current || 0), Math.abs(cWireFlow), Math.abs(dWireFlow)).toFixed(2)+'A', 0, -92, {font:'bold 12px Arial', color:'#16a085'});
+        this.label(comp, '滑动变阻器', 0, 58, {font:'12px "Microsoft YaHei"'});
+    }
+
+    drawMeterReal(comp, letter) {
+        const ctx = this.ctx;
+        this.meterActiveTerminal(comp);
+        const terms = this.terminals(comp);
+        ctx.fillStyle = '#f8fbff'; ctx.fillRect(-48,-54,96,72); ctx.strokeRect(-48,-54,96,72);
+        ctx.fillStyle = '#8fa5bd'; ctx.fillRect(-50,18,100,42); ctx.strokeRect(-50,18,100,42);
+        ctx.fillStyle = '#65c58e'; ctx.fillRect(-40,25,80,18);
+        ctx.strokeStyle = '#222'; ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.arc(0,4,42,Math.PI*1.12,Math.PI*1.88); ctx.stroke();
+        for (let i = 0; i <= 30; i++) {
+            const a = (202 + i * 136 / 30) * Math.PI / 180;
+            const majorTick = i % 10 === 0;
+            const r1 = majorTick ? 34 : 37;
+            const r2 = 42;
+            ctx.beginPath(); ctx.moveTo(r1*Math.cos(a), 4 + r1*Math.sin(a)); ctx.lineTo(r2*Math.cos(a), 4 + r2*Math.sin(a)); ctx.stroke();
+        }
+        const majors = letter === 'A'
+            ? [{top:'1', bottom:'0.2', a:222}, {top:'2', bottom:'0.4', a:270}, {top:'3', bottom:'0.6', a:318}]
+            : [{top:'5', bottom:'1', a:222}, {top:'10', bottom:'2', a:270}, {top:'15', bottom:'3', a:318}];
+        majors.forEach(m => {
+            const a = m.a * Math.PI / 180;
+            this.label(comp, m.top, 43*Math.cos(a), 4 + 43*Math.sin(a), {font:'bold 10px Arial'});
+            this.label(comp, m.bottom, 31*Math.cos(a), 10 + 31*Math.sin(a), {font:'bold 10px Arial'});
+        });
+        const frac = Math.max(0, Math.min(1, Math.abs(comp.measurement) / (comp.range || 1)));
+        const pa = (202 + frac * 136) * Math.PI / 180;
+        ctx.strokeStyle = '#222'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(0,8); ctx.lineTo(38*Math.cos(pa), 4 + 38*Math.sin(pa)); ctx.stroke();
+        ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(0,8,4,0,7); ctx.fill();
+        this.label(comp, letter, 0, -9, {font:'bold 22px Georgia'});
+        const unitLabels = letter === 'A' ? {neg:'−', r0_6:'0.6', r3:'3'} : {neg:'−', r3:'3', r15:'15'};
+        terms.forEach(t => {
+            ctx.fillStyle = t.id === 'neg' ? '#bdc3c7' : '#c0392b';
+            ctx.strokeStyle = '#222'; ctx.lineWidth = 2;
+            ctx.fillRect(t.x-5, t.y-10, 10, 16);
+            ctx.strokeRect(t.x-5, t.y-10, 10, 16);
+            ctx.beginPath(); ctx.arc(t.x,t.y-10,5,0,7); ctx.fill(); ctx.stroke();
+            this.label(comp, unitLabels[t.id] || '', t.x, 58, {font:'bold 11px Arial', color:'#fff'});
+        });
+        if (this.simulationRunning) {
+            const val = letter === 'A' ? comp.measurement.toFixed(2)+'A' : comp.measurement.toFixed(2)+'V';
+            const over = Math.abs(comp.measurement) > comp.range;
+            const text = comp._polarityWarning ? '反接!' : (over ? '超量程!' : val);
+            this.label(comp, text, 0, -64, {font:'bold 12px "Microsoft YaHei"', color:(over||comp._polarityWarning)?'#e74c3c':'#16a085'});
+        }
+    }
+    drawAmmeterReal(comp) { this.drawMeterReal(comp, 'A'); }
+    drawVoltmeterReal(comp) { this.drawMeterReal(comp, 'V'); }
+
+    drawAllTerminals() {
+        const ctx = this.ctx;
+        this.components.forEach(comp => {
+            const drawn = new Set();
+            this.getAbsoluteTerminals(comp).forEach(t => {
+                const dk = Math.round(t.x) + '_' + Math.round(t.y);
+                if (drawn.has(dk)) return;
+                drawn.add(dk);
+                const connected = this.isTerminalConnected(comp, t.terminalId);
+                ctx.fillStyle = connected ? '#2ecc71' : '#e74c3c';
+                ctx.beginPath(); ctx.arc(t.x, t.y, 4, 0, 7); ctx.fill();
+            });
+        });
+        if (this.currentTool === 'wire') {
+            const t = this.findTerminalAt(this.lastMousePos.x, this.lastMousePos.y);
+            if (t) {
+                ctx.strokeStyle = '#3498db'; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.arc(t.x, t.y, this.snapRadius, 0, 7); ctx.stroke();
+            }
+        }
+    }
+
+    highlight(comp) {
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.translate(comp.x, comp.y); ctx.rotate(comp.rotation*Math.PI/180);
+        const r = COMPONENT_DEFS[comp.type].selRadius;
+        ctx.strokeStyle = '#3498db'; ctx.lineWidth = 1.5; ctx.setLineDash([5,4]);
+        ctx.strokeRect(-r, -r, r*2, r*2);
+        ctx.setLineDash([]); ctx.restore();
+    }
+
+    /* ============================================================
+     *  属性面板
+     * ============================================================ */
+    updatePropertiesPanel() {
+        const info = document.getElementById('selected-component-info');
+        const props = document.getElementById('component-properties');
+        const c = this.selectedComponent;
+        if (!c) {
+            info.innerHTML = this.selectedWire ? '<p>已选中一根导线（按 Del 删除）</p>' : '<p>未选择任何元件</p>';
+            props.innerHTML = '';
+            return;
+        }
+        info.innerHTML = `<p>已选择: <b>${COMPONENT_DEFS[c.type].name}</b></p>`;
+        let html = '';
+        const num = (lbl, val, id, step, min) =>
+            `<div class="property-control"><label>${lbl}</label><input type="number" value="${val}" step="${step}" ${min!==undefined?`min="${min}"`:''} id="${id}"></div>`;
+        switch (c.type) {
+            case 'battery': html = num('电压 (V)', c.voltage, 'p-voltage', 0.5, 0); break;
+            case 'resistor': html = num('电阻 (Ω)', c.resistance, 'p-res', 1, 0); break;
+            case 'bulb':
+                html = num('电阻 (Ω)', c.resistance, 'p-res', 1, 0) + num('额定电流 (A)', c.ratedCurrent, 'p-rated', 0.05, 0);
+                break;
+            case 'switch':
+                html = `<div class="property-control"><label>状态（也可双击开关）</label>
+                    <select id="p-state"><option value="open"${c.state==='open'?' selected':''}>断开</option>
+                    <option value="closed"${c.state==='closed'?' selected':''}>闭合</option></select></div>`;
+                break;
+            case 'potentiometer':
+                html = num('最大电阻 (Ω)', c.resistance, 'p-res', 1, 0) +
+                    `<div class="property-control"><label>滑片位置: <b id="p-pos-val">${Math.round(c.position*100)}%</b></label>
+                     <input type="range" min="0" max="100" value="${c.position*100}" id="p-pos"></div>`;
+                break;
+            case 'ammeter':
+            case 'voltmeter':
+                const active = this.meterActiveTerminal(c);
+                const allTerms = c.type === 'ammeter' ? '−、0.6、3 A' : '−、3、15 V';
+                html = `<div class="property-control"><label>接线柱</label><input value="${allTerms}" readonly></div>
+                    <div class="property-control"><label>当前接入量程</label><input value="${active.label} ${c.type==='ammeter'?'A':'V'}" readonly></div>
+                    <div class="property-control"><label>当前读数</label><input value="${c.type==='ammeter'?c.measurement.toFixed(3)+' A':c.measurement.toFixed(2)+' V'}" readonly></div>
+                    ${c._terminalWarning ? `<div class="badge-warn">${c._terminalWarning}</div>` : ''}
+                    ${c.type==='ammeter' && c._polarityWarning ? '<div class="badge-warn">电流表反接：请让电流从“0.6/3”量程接线柱流入，从“−”接线柱流出。</div>' : ''}`;
+                break;
+        }
+        props.innerHTML = html;
+        const bind = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
+        bind('p-voltage','change', e => { this.saveUndo(); c.voltage = parseFloat(e.target.value)||0; this.recalc(); });
+        bind('p-res','change', e => { this.saveUndo(); c.resistance = parseFloat(e.target.value)||0; this.recalc(); });
+        bind('p-rated','change', e => { this.saveUndo(); c.ratedCurrent = parseFloat(e.target.value)||0.3; this.recalc(); });
+        bind('p-state','change', e => { this.saveUndo(); c.state = e.target.value; this.recalc(); });
+        bind('p-pos','input', e => { if (!c._posUndoSaved) { this.saveUndo(); c._posUndoSaved = true; setTimeout(()=>c._posUndoSaved=false, 250); } c.position = e.target.value/100; document.getElementById('p-pos-val').textContent = e.target.value+'%'; this.recalc(); });
+    }
+
+    getComponentName(type) { return COMPONENT_DEFS[type].name; }
+
+    updateCircuitInfo() {
+        document.getElementById('component-count').textContent = this.components.length;
+        const visibleWireCount = this.activeWires().length;
+        document.getElementById('wire-count').textContent = visibleWireCount;
+        const el = document.getElementById('connection-status');
+        if (visibleWireCount > 0) { el.textContent = '已连线'; el.style.color = '#2ecc71'; }
+        else { el.textContent = '未连接'; el.style.color = '#e74c3c'; }
+    }
+
+    /* ---------- 工具栏动作 ---------- */
+    toggleGrid() { this.showGrid = !this.showGrid; this.draw(); }
+    zoom(d) { this.scale = Math.min(Math.max(0.5, this.scale + d), 3); this.draw(); }
+
+    // 自动缩放定位，使全部元件落在可视区（leftMargin 留给引导面板）
+    fitView(leftMargin = 20) {
+        if (!this.components.length) { this.panX = 40; this.panY = 30; this.scale = 1; this.draw(); return; }
+        let minX=1e9, minY=1e9, maxX=-1e9, maxY=-1e9;
+        this.components.forEach(c => {
+            const r = COMPONENT_DEFS[c.type].selRadius + 20;
+            minX = Math.min(minX, c.x-r); maxX = Math.max(maxX, c.x+r);
+            minY = Math.min(minY, c.y-r); maxY = Math.max(maxY, c.y+r);
+        });
+        const availW = Math.max(100, this.canvas.width - leftMargin - 20);
+        const availH = Math.max(100, this.canvas.height - 40);
+        const w = maxX-minX, h = maxY-minY;
+        this.scale = Math.max(0.5, Math.min(availW/w, availH/h, 1.4));
+        this.panX = leftMargin - minX*this.scale + (availW - w*this.scale)/2;
+        this.panY = 20 - minY*this.scale + (availH - h*this.scale)/2;
+        this.draw();
+    }
+
+    clearAll() {
+        this.saveUndo();
+        this.components = []; this.wires = [];
+        this.activeExperiment = null; this.schematicReference = null;
+        this.selectedComponent = null; this.selectedWire = null;
+        this.wireDrawing = false; this.draftWire = null;
+        document.getElementById('guide-panel').classList.remove('show');
+        this.updateMiniSchematicVisibility();
+        this.updatePropertiesPanel(); this.updateCircuitInfo(); this.recalc();
+    }
+
+    /* ============================================================
+     *  实验引导（预设电路 + 步骤提示）
+     * ============================================================ */
+    buildExperimentMenu() {
+        const menu = document.getElementById('exp-menu');
+        EXPERIMENTS.forEach((exp, i) => {
+            const d = document.createElement('div');
+            d.innerHTML = `${exp.title}<small>${exp.subtitle}</small>`;
+            d.addEventListener('click', () => { this.loadExperiment(i); menu.classList.remove('show'); });
+            menu.appendChild(d);
+        });
+    }
+
+    loadExperiment(i) {
+        const exp = EXPERIMENTS[i];
+        this.saveUndo();
+        this.suppressUndo = true;
+        this.clearAll();
+        this.panX = 40; this.panY = 30; this.scale = 1;
+        exp.build(this);
+        this.suppressUndo = false;
+        this.components.forEach(c => { c.realX = c.realX ?? c.x; c.realY = c.realY ?? c.y; });
+        this.activeExperiment = i;
+        this.schematicReference = {
+            components: JSON.parse(JSON.stringify(this.components)),
+            wires: JSON.parse(JSON.stringify(this.wires.filter(w => w.view !== 'real')))
+        };
+        this.recalc();
+        this.updatePropertiesPanel();
+        this.fitView(310); // 让出左侧引导面板
+        // 引导面板
+        const g = document.getElementById('guide-panel');
+        g.innerHTML = `<h4>${exp.title}<span class="close-g">✕</span></h4>
+            <div class="goal">🎯 <b>实验目的：</b>${exp.goal}</div>
+            <ol>${exp.steps.concat(['切换到“实物图”后，请按右上角参考电路图自己完成实物接线。']).map(s => `<li>${s}</li>`).join('')}</ol>`;
+        g.classList.add('show');
+        g.querySelector('.close-g').addEventListener('click', () => g.classList.remove('show'));
+    }
+
+    drawMiniSchematic() {
+        if (!this.schematicReference) return;
+        const canvas = document.getElementById('mini-canvas');
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.save();
+        const comps = this.schematicReference.components;
+        if (!comps.length) { ctx.restore(); return; }
+        let minX=1e9, minY=1e9, maxX=-1e9, maxY=-1e9;
+        comps.forEach(c => { const r = COMPONENT_DEFS[c.type].selRadius + 20; minX=Math.min(minX,c.x-r); minY=Math.min(minY,c.y-r); maxX=Math.max(maxX,c.x+r); maxY=Math.max(maxY,c.y+r); });
+        const s = Math.min((canvas.width-20)/(maxX-minX || 1), (canvas.height-18)/(maxY-minY || 1));
+        ctx.translate(10 - minX*s, 8 - minY*s);
+        ctx.scale(s, s);
+        const oldMode = this.viewMode, oldComps = this.components, oldWires = this.wires;
+        const oldCtx = this.ctx, oldScale = this.scale, oldPanX = this.panX, oldPanY = this.panY;
+        this.viewMode = 'schematic'; this.components = comps; this.wires = this.schematicReference.wires;
+        this.ctx = ctx; this.scale = 1; this.panX = 0; this.panY = 0;
+        this.activeWires().forEach(w => this.drawWire(w, false));
+        this.components.forEach(c => this.drawComponent(c));
+        this.ctx = oldCtx; this.scale = oldScale; this.panX = oldPanX; this.panY = oldPanY;
+        this.viewMode = oldMode; this.components = oldComps; this.wires = oldWires;
+        ctx.restore();
+    }
+}
+
+/* ============================================================
+ *  预设实验数据
+ *  build(sim) 用 createComponent + connectTerminals 搭建电路
+ * ============================================================ */
+const EXPERIMENTS = [
+    {
+        title: '① 探究串联电路的电流规律',
+        subtitle: '串联各处电流相等',
+        goal: '验证串联电路中各处电流相等。',
+        steps: [
+            '电源、开关、两个灯泡 L₁ L₂ 串联，电流表测干路电流。',
+            '闭合开关（双击开关），观察电流表读数。',
+            '把电流表分别移到不同位置重新连线，比较读数是否相同。',
+            '结论：串联电路中电流处处相等 I₁=I₂=I。'
+        ],
+        build(sim) {
+            const bat = sim.createComponent('battery', {x:520, y:440, voltage:3});
+            const sw = sim.createComponent('switch', {x:240, y:440, state:'closed'});
+            const am = sim.createComponent('ammeter', {x:240, y:200});
+            const l1 = sim.createComponent('bulb', {x:480, y:200, resistance:10});
+            const l2 = sim.createComponent('bulb', {x:680, y:200, resistance:10});
+            sim.connectTerminalsReal(bat,'pos', sw,'b', [], [{x:430,y:500},{x:320,y:500}]);
+            sim.connectTerminalsReal(sw,'a', am,'r0_6', [{x:120,y:440},{x:120,y:200}], [{x:90,y:420},{x:90,y:260},{x:200,y:250}]);
+            sim.connectTerminalsReal(am,'neg', l1,'shell', [], [{x:250,y:130},{x:410,y:140}]);
+            sim.connectTerminalsReal(l1,'tip', l2,'shell', [], [{x:535,y:255},{x:605,y:255}]);
+            sim.connectTerminalsReal(l2,'tip', bat,'neg', [{x:840,y:200},{x:840,y:440}], [{x:820,y:260},{x:820,y:500},{x:600,y:500}]);
+            sim.selectedComponent = null;
+        }
+    },
+    {
+        title: '② 探究并联电路的电流规律',
+        subtitle: '干路电流=各支路之和',
+        goal: '验证并联电路干路电流等于各支路电流之和。',
+        steps: [
+            '两个灯泡 L₁ L₂ 并联接在电源两端，开关和电流表 A 在干路。',
+            '两个支路各串联一个电流表 A₁、A₂，电流要从量程接线柱进入、从“−”柱流出。',
+            '闭合开关，观察两灯都发光，并读取 A、A₁、A₂。',
+            '比较：干路电流 A ≈ 支路电流 A₁ + A₂。',
+            '结论：并联电路 I=I₁+I₂，各支路电压相等。'
+        ],
+        build(sim) {
+            const bat = sim.createComponent('battery', {x:360, y:500, voltage:3});
+            const sw = sim.createComponent('switch', {x:220, y:500, state:'closed'});
+            const am = sim.createComponent('ammeter', {x:270, y:260, range:3});
+            const am1 = sim.createComponent('ammeter', {x:520, y:170, range:0.6});
+            const am2 = sim.createComponent('ammeter', {x:520, y:350, range:0.6});
+            const l1 = sim.createComponent('bulb', {x:720, y:170, resistance:10});
+            const l2 = sim.createComponent('bulb', {x:720, y:350, resistance:10});
+            Object.assign(bat, {realX:330, realY:560});
+            Object.assign(sw, {realX:610, realY:560});
+            Object.assign(am, {realX:210, realY:300});
+            Object.assign(am1, {realX:500, realY:150});
+            Object.assign(am2, {realX:500, realY:390});
+            Object.assign(l1, {realX:760, realY:160});
+            Object.assign(l2, {realX:760, realY:410});
+            // 实物图按教材逻辑：电源正极→开关→干路A量程柱，干路A的-柱外侧分流到两支路
+            sim.connectTerminalsReal(bat,'pos', sw,'b', [], [{x:430,y:600},{x:540,y:600}]);
+            sim.connectTerminalsReal(sw,'a', am,'r3', [{x:190,y:260}], [{x:610,y:615},{x:140,y:615},{x:155,y:380},{x:238,y:350}]);
+            sim.connectTerminalsReal(am,'neg', am1,'r0_6', [{x:420,y:260},{x:420,y:170}], [{x:182,y:348},{x:165,y:180},{x:430,y:88},{x:500,y:198}]);
+            sim.connectTerminalsReal(am,'neg', am2,'r0_6', [{x:420,y:260},{x:420,y:350}], [{x:182,y:348},{x:285,y:470},{x:445,y:455},{x:500,y:438}]);
+            sim.connectTerminalsReal(am1,'neg', l1,'shell', [], [{x:472,y:198},{x:610,y:95},{x:735,y:145}]);
+            sim.connectTerminalsReal(am2,'neg', l2,'shell', [], [{x:472,y:438},{x:625,y:455},{x:735,y:395}]);
+            // 两支路在右侧外部汇合，再从外围回电源负极，避免穿过电表和灯泡
+            sim.connectTerminalsReal(l1,'tip', bat,'neg', [{x:860,y:170},{x:860,y:500}], [{x:790,y:200},{x:910,y:265},{x:910,y:635},{x:430,y:620}]);
+            sim.connectTerminalsReal(l2,'tip', bat,'neg', [{x:860,y:350},{x:860,y:500}], [{x:790,y:450},{x:875,y:535},{x:810,y:620},{x:430,y:620}]);
+            sim.selectedComponent = null;
+        }
+    },
+    {
+        title: '③ 伏安法测电阻',
+        subtitle: '电流表串联，电压表并联',
+        goal: '用电流表、电压表测出未知电阻，练习欧姆定律 R=U/I。',
+        steps: [
+            '按教材电路连接：电源、开关、电流表、待测电阻 R、滑动变阻器串联。',
+            '电压表并联在待测电阻 R 两端，使用“−”和合适的量程接线柱。',
+            '闭合开关前，把滑动变阻器滑片置于最大阻值处。',
+            '闭合开关，移动滑片改变电流，多次记录 U、I。',
+            '计算 R=U/I，比较多次测量结果并取平均值。'
+        ],
+        build(sim) {
+            const bat = sim.createComponent('battery', {x:420, y:500, voltage:6});
+            const sw = sim.createComponent('switch', {x:650, y:500, state:'open'});
+            const am = sim.createComponent('ammeter', {x:220, y:330, rotation:90});
+            const r = sim.createComponent('resistor', {x:390, y:220, resistance:10});
+            const pot = sim.createComponent('potentiometer', {x:610, y:220, resistance:20, position:1});
+            const vm = sim.createComponent('voltmeter', {x:390, y:110});
+
+            // 教材式测量电路：电源正极 → 电流表 → 待测电阻 R → 滑动变阻器 → 开关 → 电源负极
+            sim.connectTerminals(bat,'pos', am,'r0_6', [{x:220,y:500}]);
+            sim.connectTerminals(am,'neg', r,'a', [{x:220,y:220}]);
+            sim.connectTerminals(r,'b', pot,'a', [{x:500,y:220},{x:500,y:238}]);
+            sim.connectTerminals(pot,'c', sw,'b', [{x:578,y:150},{x:760,y:150},{x:760,y:500}]);
+            sim.connectTerminals(sw,'a', bat,'neg');
+
+            // 电压表并联在待测电阻 R 两端
+            sim.connectTerminals(vm,'r3', r,'a', [{x:358,y:160}]);
+            sim.connectTerminals(vm,'neg', r,'b', [{x:422,y:160}]);
+            sim.selectedComponent = sw;
+        }
+    },
+    {
+        title: '④ 滑动变阻器调节灯泡亮度',
+        subtitle: '理解变阻器的作用',
+        goal: '观察滑动变阻器改变电路电流，从而改变灯泡亮度。',
+        steps: [
+            '电源、开关、滑动变阻器、灯泡、电流表串联。',
+            '闭合开关，选中滑动变阻器，拖动右侧"滑片位置"滑块。',
+            '滑片移动→接入电阻变化→电流变化→灯泡变亮/变暗。',
+            '思考：电阻变大时电流怎么变？亮度怎么变？'
+        ],
+        build(sim) {
+            const bat = sim.createComponent('battery', {x:360, y:520, voltage:3});
+            const sw = sim.createComponent('switch', {x:220, y:520, state:'closed'});
+            const pot = sim.createComponent('potentiometer', {x:430, y:180, resistance:20, position:0.5});
+            const am = sim.createComponent('ammeter', {x:630, y:180});
+            const bulb = sim.createComponent('bulb', {x:820, y:180, resistance:10});
+            sim.connectTerminals(bat,'pos', sw,'b');
+            sim.connectTerminals(sw,'a', pot,'a', [{x:190,y:198}]);
+            sim.connectTerminals(pot,'c', am,'r0_6', [{x:398,y:140},{x:598,y:140}]);
+            sim.connectTerminals(am,'neg', bulb,'shell');
+            sim.connectTerminals(bulb,'tip', bat,'neg', [{x:940,y:180},{x:940,y:520}]);
+            sim.selectedComponent = pot; // 直接选中变阻器方便调节
+        }
+    }
+];
+
+/* ============================================================
+ *  库侧栏 SVG 图标注入
+ * ============================================================ */
+const ICONS = {
+    BAT: '<svg viewBox="0 0 48 24"><line x1="4" y1="12" x2="18" y2="12"/><line x1="18" y1="3" x2="18" y2="21"/><line x1="30" y1="7" x2="30" y2="17"/><line x1="30" y1="12" x2="44" y2="12"/></svg>',
+    RES: '<svg viewBox="0 0 48 24"><line x1="2" y1="12" x2="11" y2="12"/><rect x="11" y="6" width="26" height="12"/><line x1="37" y1="12" x2="46" y2="12"/></svg>',
+    BULB:'<svg viewBox="0 0 48 24"><line x1="2" y1="12" x2="12" y2="12"/><circle cx="24" cy="12" r="9"/><line x1="18" y1="6" x2="30" y2="18"/><line x1="30" y1="6" x2="18" y2="18"/><line x1="36" y1="12" x2="46" y2="12"/></svg>',
+    SW:  '<svg viewBox="0 0 48 24"><line x1="2" y1="16" x2="14" y2="16"/><circle cx="14" cy="16" r="2.5"/><line x1="14" y1="16" x2="32" y2="6"/><circle cx="34" cy="16" r="2.5"/><line x1="34" y1="16" x2="46" y2="16"/></svg>',
+    POT: '<svg viewBox="0 0 48 24"><line x1="2" y1="16" x2="9" y2="16"/><rect x="9" y="10" width="30" height="12"/><line x1="39" y1="16" x2="46" y2="16"/><line x1="24" y1="2" x2="24" y2="9"/><line x1="24" y1="9" x2="20" y2="5"/><line x1="24" y1="9" x2="28" y2="5"/></svg>',
+    AM:  '<svg viewBox="0 0 48 24"><line x1="2" y1="12" x2="12" y2="12"/><circle cx="24" cy="12" r="10"/><text x="24" y="16" font-size="11" text-anchor="middle">A</text><line x1="36" y1="12" x2="46" y2="12"/></svg>',
+    VM:  '<svg viewBox="0 0 48 24"><line x1="2" y1="12" x2="12" y2="12"/><circle cx="24" cy="12" r="10"/><text x="24" y="16" font-size="11" text-anchor="middle">V</text><line x1="36" y1="12" x2="46" y2="12"/></svg>'
+};
+document.querySelectorAll('.component-item .ico').forEach(el => {
+    el.innerHTML = el.innerHTML.replace(/\{\{(\w+)\}\}/, (_, k) => ICONS[k] || '');
+});
+
+/* ---------- 启动 ---------- */
+window.addEventListener('DOMContentLoaded', () => {
+    window.sim = new CircuitSimulator('circuit-canvas');
+});
+</script>
+</body>
+</html>
