@@ -169,6 +169,28 @@
     /* 触屏模式：放大工具按钮，便于点击 */
     body.touch .tool-button { padding: 11px 16px; font-size: 14px; }
     body.touch .component-item { padding: 11px; }
+
+    #pot-principle { position:absolute;right:14px;bottom:14px;width:min(430px,calc(100% - 28px));background:#fff;color:#243247;border:1px solid #94a3b8;border-radius:10px;box-shadow:0 8px 28px #0003;z-index:9;overflow:hidden; }
+    #pot-principle[hidden] { display:none; }
+    .principle-heading { display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:#edf3f8;font-size:15px; }
+    #pot-principle-close { border:0;background:transparent;color:inherit;font-size:22px;cursor:pointer;padding:0 8px; }
+    #pot-principle-canvas { display:block;width:100%;height:auto; }
+    #pot-principle-note { padding:0 12px 12px;font-size:13px;text-align:center; }
+    body.dark { background:#111827;color:#e5edf6;color-scheme:dark; }
+    body.dark .canvas-container { background:#111827; }
+    body.dark .toolbar { background:linear-gradient(90deg,#1e293b,#24374c); }
+    body.dark .component-library,body.dark .properties-panel { background:linear-gradient(#172335,#111c2e); }
+    body.dark .tool-button { background:#334155;color:#f1f5f9; }
+    body.dark .tool-button:hover { background:#475569; }
+    body.dark .tool-button.active { background:#147d64; }
+    body.dark .tool-button.warning { background:#b73636; }
+    body.dark .menu-dropdown,body.dark #context-menu,body.dark #mode-modal .box,body.dark #guide-panel,body.dark #schematic-mini,body.dark #pot-principle { background:#1e293b;color:#e2e8f0; }
+    body.dark .menu-dropdown div,body.dark #context-menu div,body.dark #mode-modal h2,body.dark #mode-modal .choice .t { color:#e2e8f0; }
+    body.dark .menu-dropdown div:hover,body.dark #context-menu div:hover,body.dark #mode-modal .choice:hover { background:#334155; }
+    body.dark #guide-panel .goal,body.dark .principle-heading,body.dark #schematic-mini .mini-title { background:#293b50;color:#e2e8f0; }
+    body.dark #guide-panel h4,body.dark .property-group h4 { color:#7dc6fa; }
+    body.dark #mode-modal p,body.dark .menu-dropdown div small { color:#bac8d8; }
+    body.dark #mode-modal .choice { border-color:#52637a; }
 </style>
 </head>
 <body>
@@ -244,6 +266,8 @@
             </div>
             <div class="tool-separator"></div>
             <button class="tool-button" id="view-toggle">🔌 实物图</button>
+            <button class="tool-button" id="pot-principle-toggle" aria-pressed="false">变阻器原理</button>
+            <button class="tool-button" id="theme-toggle" aria-pressed="false">暗色模式</button>
             <button class="tool-button" id="toggle-grid">网格</button>
             <button class="tool-button" id="fit-view">⊡ 适应</button>
             <button class="tool-button" id="zoom-in">放大＋</button>
@@ -257,6 +281,11 @@
             <canvas id="circuit-canvas" width="1000" height="700">浏览器不支持 Canvas</canvas>
             <div id="guide-panel"></div>
             <div id="schematic-mini"><div class="mini-title">参考电路图</div><canvas id="mini-canvas" width="260" height="154"></canvas></div>
+            <section id="pot-principle" hidden aria-label="滑动变阻器原理图">
+                <div class="principle-heading"><b>滑动变阻器原理图</b><button id="pot-principle-close" aria-label="关闭原理图">×</button></div>
+                <canvas id="pot-principle-canvas" width="600" height="280"></canvas>
+                <p id="pot-principle-note"></p>
+            </section>
             <div id="context-menu"></div>
             <div class="drag-indicator" id="drag-indicator"></div>
         </div>
@@ -414,6 +443,8 @@ class CircuitSimulator {
         this.gridSize = 20;
         this.idCounter = 0;
         this.shortCircuit = false;
+        this.darkMode = false;
+        this.showPotPrinciple = false;
         this.viewMode = 'schematic';     // 'schematic' 电路图 | 'real' 实物图
         this.inputMode = 'mouse';        // 'mouse' | 'touch'
         this.hitScale = 1;               // 触屏时放大命中半径
@@ -425,6 +456,8 @@ class CircuitSimulator {
         this.activeExperiment = null;
         this.schematicReference = null;
 
+        try { this.darkMode=localStorage.getItem('elec-lab-theme')==='dark'; } catch (_) {}
+        this.applyTheme();
         this.resizeCanvas();
         this.setupEventListeners();
         this.buildExperimentMenu();
@@ -469,6 +502,13 @@ class CircuitSimulator {
         document.getElementById('rotate-btn').addEventListener('click', () => this.rotateSelected());
         document.getElementById('delete-btn').addEventListener('click', () => this.deleteSelected());
         document.getElementById('toggle-grid').addEventListener('click', () => this.toggleGrid());
+        document.getElementById('theme-toggle').addEventListener('click',()=>{
+            this.darkMode=!this.darkMode;this.applyTheme();
+            try { localStorage.setItem('elec-lab-theme',this.darkMode?'dark':'light'); } catch (_) {}
+            this.draw();if(this.schematicReference)this.drawMiniSchematic();
+        });
+        document.getElementById('pot-principle-toggle').addEventListener('click',()=>this.togglePotPrinciple());
+        document.getElementById('pot-principle-close').addEventListener('click',()=>this.togglePotPrinciple(false));
         document.getElementById('view-toggle').addEventListener('click', () => this.toggleViewMode());
         document.getElementById('fit-view').addEventListener('click', () => this.fitView(document.getElementById('guide-panel').classList.contains('show') ? 310 : 20));
         document.getElementById('zoom-in').addEventListener('click', () => this.zoom(0.1));
@@ -540,6 +580,12 @@ class CircuitSimulator {
     /* ---------- 接线柱几何 ---------- */
     terminals(comp) {
         if (this.viewMode === 'schematic') {
+            if(comp.type==='potentiometer') {
+                const bOnly=this.isTerminalConnected(comp,'b')&&!this.isTerminalConnected(comp,'a');
+                return [{id:'a',x:bOnly?48:-48,y:24,hidden:bOnly&&this.currentTool!=='wire'},
+                    {id:'b',x:bOnly?-48:48,y:24,hidden:!this.isTerminalConnected(comp,'b')&&this.currentTool!=='wire'},
+                    {id:'c',x:48,y:-28},{id:'d',x:48,y:-28}];
+            }
             if (comp.type === 'bulb') return [ {id:'shell', x:-32, y:0}, {id:'tip', x:32, y:0} ];
             if (comp.type === 'ammeter') return [
                 {id:'r0_6', x:-32, y:0}, {id:'r3', x:-32, y:0}, {id:'neg', x:32, y:0}
@@ -560,8 +606,8 @@ class CircuitSimulator {
                 {id:'neg', x:-37.2, y:54.24}, {id:'r3', x:0, y:54.24}, {id:'r15', x:37.2, y:54.24}
             ];
             if (comp.type === 'potentiometer') return [
-                {id:'a', x:-88, y:24}, {id:'b', x:88, y:24},
-                {id:'c', x:-48, y:-28}, {id:'d', x:48, y:-28}
+                {id:'a', x:-76, y:24}, {id:'b', x:76, y:24},
+                {id:'c', x:-112, y:-30}, {id:'d', x:112, y:-30}
             ];
         }
         return COMPONENT_DEFS[comp.type].terminals(comp);
@@ -575,7 +621,7 @@ class CircuitSimulator {
         return this.terminals(comp).map(t => ({
             x: base.x + t.x * cos - t.y * sin,
             y: base.y + t.x * sin + t.y * cos,
-            componentId: comp.id, terminalId: t.id, component: comp
+            componentId: comp.id, terminalId: t.id, component: comp, hidden: !!t.hidden
         }));
     }
 
@@ -597,6 +643,7 @@ class CircuitSimulator {
         const seen = new Set();
         for (const comp of this.components) {
             for (const t of this.getAbsoluteTerminals(comp)) {
+                if(t.hidden)continue;
                 const sk = comp.id + '_' + Math.round(t.x) + '_' + Math.round(t.y);
                 if (seen.has(sk)) continue;
                 seen.add(sk);
@@ -612,7 +659,7 @@ class CircuitSimulator {
             const c = this.components[i];
             const p = this.componentPos(c);
             const r = COMPONENT_DEFS[c.type].selRadius * this.hitScale;
-            if (Math.hypot(p.x - x, p.y - y) < r) return c;
+            if(this.viewMode==='real' ? this.pointInBox({x,y},this.realComponentBox(c,0)) : Math.hypot(p.x-x,p.y-y)<r)return c;
         }
         return null;
     }
@@ -943,6 +990,41 @@ class CircuitSimulator {
         }
     }
 
+    applyTheme() {
+        document.body.classList.toggle('dark',!!this.darkMode);
+        const button=document.getElementById('theme-toggle');
+        button.textContent=this.darkMode?'浅色模式':'暗色模式';button.setAttribute('aria-pressed',String(!!this.darkMode));
+    }
+
+    get schematicInk() { return this.darkMode&&this.viewMode==='schematic'?'#e2e8f0':'#222'; }
+    get symbolFill() { return this.darkMode&&this.viewMode==='schematic'?'#1e293b':'#fff'; }
+    get flowColor() { return this.darkMode?'#ff6666':'#dc2626'; }
+
+    togglePotPrinciple(show=!this.showPotPrinciple) {
+        this.showPotPrinciple=show;document.getElementById('pot-principle').hidden=!show;
+        const b=document.getElementById('pot-principle-toggle');b.classList.toggle('active',show);b.setAttribute('aria-pressed',String(show));
+        this.drawPotPrinciple();
+    }
+
+    drawPotPrinciple() {
+        if(!this.showPotPrinciple)return;
+        const comp=this.selectedComponent?.type==='potentiometer'?this.selectedComponent:this.components.find(c=>c.type==='potentiometer');
+        const canvas=document.getElementById('pot-principle-canvas'),ctx=canvas.getContext('2d');
+        const ink=this.darkMode?'#e2e8f0':'#252525',bg=this.darkMode?'#1e293b':'#fff';
+        ctx.clearRect(0,0,600,280);ctx.fillStyle=bg;ctx.fillRect(0,0,600,280);ctx.strokeStyle=ink;ctx.fillStyle=ink;
+        ctx.lineWidth=2.5;ctx.font='26px Georgia';ctx.textAlign='center';ctx.textBaseline='middle';
+        if(!comp){ctx.font='22px Microsoft YaHei';ctx.fillText('请添加或选中滑动变阻器',300,135);document.getElementById('pot-principle-note').textContent='原理图会与滑片位置同步。';return;}
+        const x=150+300*comp.position;
+        ctx.beginPath();ctx.moveTo(80,55);ctx.lineTo(520,55);ctx.moveTo(80,210);ctx.lineTo(150,210);ctx.moveTo(450,210);ctx.lineTo(520,210);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(150,210);for(let i=0;i<24;i++){const start=150+i*12.5;ctx.quadraticCurveTo(start+6.25,i%2?224:196,start+12.5,210);}ctx.stroke();
+        ctx.beginPath();ctx.moveTo(x,55);ctx.lineTo(x,182);ctx.stroke();ctx.beginPath();ctx.moveTo(x,201);ctx.lineTo(x-12,177);ctx.lineTo(x,182);ctx.lineTo(x+12,177);ctx.closePath();ctx.fill();
+        ctx.fillText('P',Math.min(485,x+25),168);
+        for(const [px,py,label,tx] of [[80,55,'C',48],[520,55,'D',553],[80,210,'A',48],[520,210,'B',553]]){
+            ctx.fillStyle=bg;ctx.beginPath();ctx.arc(px,py,11,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.fillStyle=ink;ctx.fillText(label,tx,py);
+        }
+        document.getElementById('pot-principle-note').textContent=`A—P：${(comp.resistance*comp.position).toFixed(1)} Ω　 P—B：${(comp.resistance*(1-comp.position)).toFixed(1)} Ω`;
+    }
+
     syncViewButton() {
         const btn = document.getElementById('view-toggle');
         btn.textContent = this.viewMode === 'real' ? '📐 电路图' : '🔌 实物图';
@@ -1112,7 +1194,7 @@ class CircuitSimulator {
             ...JSON.parse(JSON.stringify(def.defaults))
         };
         // 覆盖外部传入的有效属性
-        ['voltage','resistance','ratedCurrent','position','state','range','rotation']
+        ['voltage','resistance','ratedCurrent','position','state','range','rotation','label']
             .forEach(k => { if (props[k] !== undefined) comp[k] = props[k]; });
         this.components.push(comp);
         this.selectedComponent = comp; this.selectedWire = null;
@@ -1527,6 +1609,7 @@ class CircuitSimulator {
     draw() {
         const ctx = this.ctx;
         ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        ctx.fillStyle=this.darkMode?'#111827':'#fbfcfd';ctx.fillRect(0,0,this.canvas.width,this.canvas.height);
         ctx.save();
         ctx.translate(this.panX, this.panY);
         ctx.scale(this.scale, this.scale);
@@ -1544,6 +1627,7 @@ class CircuitSimulator {
             this.drawAllTerminals();
         }
         if (this.selectedComponent) this.highlight(this.selectedComponent);
+        this.drawPotPrinciple();
 
         ctx.restore();
     }
@@ -1552,7 +1636,7 @@ class CircuitSimulator {
         const ctx = this.ctx, g = this.gridSize;
         const w = this.canvas.width / this.scale, h = this.canvas.height / this.scale;
         const x0 = -this.panX / this.scale, y0 = -this.panY / this.scale;
-        ctx.strokeStyle = '#e8ecef'; ctx.lineWidth = 1;
+        ctx.strokeStyle = this.darkMode?'#243246':'#e8ecef'; ctx.lineWidth = 1;
         for (let x = Math.floor(x0/g)*g; x < x0 + w; x += g) {
             ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y0 + h); ctx.stroke();
         }
@@ -1565,7 +1649,7 @@ class CircuitSimulator {
         const ctx = this.ctx;
         if (this.viewMode === 'real') { this.drawRealWire(w, selected); return; }
         const pts = this.resolveWire(w);
-        ctx.strokeStyle = selected ? '#e74c3c' : '#222';
+        ctx.strokeStyle = selected ? '#e74c3c' : this.schematicInk;
         ctx.lineWidth = selected ? 4 : 3;
         ctx.lineCap = 'round'; ctx.lineJoin = 'round';
         ctx.beginPath();
@@ -1573,7 +1657,7 @@ class CircuitSimulator {
         for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
         ctx.stroke();
         // 折点处画节点圆点
-        ctx.fillStyle = '#222';
+        ctx.fillStyle = this.schematicInk;
         (w.bends || []).forEach(b => { ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, 7); ctx.fill(); });
         // 电流流动光点动画
         if (this.simulationRunning && Math.abs(w._flowMag || 0) > 1e-9) this.drawFlow(w, pts);
@@ -1596,7 +1680,7 @@ class CircuitSimulator {
     realComponentBox(comp, pad = 20) {
         const p = this.componentPos(comp);
         const bounds = {battery:[-68,-48,68,48], bulb:[-56,-64,56,48], switch:[-60,-48,60,40],
-            resistor:[-34,-14,34,16], potentiometer:[-112,-78,112,72],
+            resistor:[-34,-14,34,16], potentiometer:[-124,-80,124,82],
             ammeter:[-64,-78,64,81], voltmeter:[-64,-78,64,81]};
         const [l,t,r,b] = bounds[comp.type] || [-50,-50,50,50];
         const a = ['ammeter','voltmeter'].includes(comp.type) ? 0 : comp.rotation*Math.PI/180;
@@ -1783,7 +1867,7 @@ class CircuitSimulator {
             }
             return pts[pts.length - 1];
         };
-        ctx.fillStyle = '#f1c40f';
+        ctx.fillStyle = this.flowColor;
         ctx.shadowColor = '#f39c12'; ctx.shadowBlur = 0;
         for (let d = off; d < total; d += spacing) {
             const p = ptAt(dir > 0 ? d : total - d);
@@ -1819,7 +1903,7 @@ class CircuitSimulator {
     }
 
     drawFlowArrow(p, angle) {
-        const ctx=this.ctx;ctx.save();ctx.translate(p.x,p.y);ctx.rotate(angle);
+        const ctx=this.ctx;ctx.save();ctx.fillStyle=this.flowColor;ctx.translate(p.x,p.y);ctx.rotate(angle);
         ctx.beginPath();ctx.moveTo(5,0);ctx.lineTo(-4,-3.5);ctx.lineTo(-2,0);ctx.lineTo(-4,3.5);ctx.closePath();ctx.fill();ctx.restore();
     }
 
@@ -1840,7 +1924,7 @@ class CircuitSimulator {
         ctx.translate(pos.x, pos.y);
         if (!(this.viewMode === 'real' && (comp.type === 'ammeter' || comp.type === 'voltmeter')))
             ctx.rotate(comp.rotation * Math.PI / 180);
-        ctx.lineWidth = 2; ctx.strokeStyle = '#222'; ctx.fillStyle = '#222';
+        ctx.lineWidth = 2; ctx.strokeStyle = this.schematicInk; ctx.fillStyle = this.schematicInk;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         const base = {
             battery:'Battery', resistor:'Resistor', bulb:'Bulb', switch:'Switch',
@@ -1864,7 +1948,9 @@ class CircuitSimulator {
         ctx.save();
         ctx.translate(lx, ly);
         if (!(this.viewMode==='real' && ['ammeter','voltmeter'].includes(comp.type))) ctx.rotate(-comp.rotation * Math.PI / 180);
-        ctx.fillStyle = opts.color || '#333';
+        let color=opts.color||'#333';
+        if(this.darkMode&&['#333','#222','#2c3e50','#7f8c8d','#16a085'].includes(color))color=color==='#16a085'?'#4adeb0':'#e2e8f0';
+        ctx.fillStyle=color;
         ctx.font = opts.font || '12px "Microsoft YaHei"';
         ctx.fillText(text, 0, 0);
         ctx.restore();
@@ -1875,7 +1961,7 @@ class CircuitSimulator {
         const dir = comp._current >= 0 ? 1 : -1; // a→b 为正
         if (comp.type === 'bulb') return;
         ctx.save();
-        ctx.fillStyle = '#e74c3c';
+        ctx.fillStyle = this.flowColor;
         let ax = 14 * dir, ay = -22;
         if (comp.type === 'potentiometer') {
             ax = (-34 + 68 * (comp.position || 0.5)); ay = 2;
@@ -1906,33 +1992,40 @@ class CircuitSimulator {
     drawResistor(comp) {
         const ctx = this.ctx;
         ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-22,0); ctx.moveTo(22,0); ctx.lineTo(32,0); ctx.stroke();
-        ctx.fillStyle = '#fff'; ctx.fillRect(-22,-8,44,16);
+        ctx.fillStyle = this.symbolFill; ctx.fillRect(-22,-8,44,16);
         ctx.strokeRect(-22,-9,44,18);
         this.label(comp, comp.resistance + 'Ω', 0, 24, {font:'italic bold 13px Georgia', color:'#2c3e50'});
+    }
+
+    bulbAppearance(comp) {
+        const current=this.simulationRunning?Math.abs(comp.current||0):0;
+        const rated=Math.max(comp.ratedCurrent||.3,.001),power=current*current*Math.max(comp.resistance||0,0);
+        const ratio=(current/rated)**2;
+        const level=Math.min(1,Math.pow(ratio,.7));
+        return {power,ratio,level,lit:current>1e-4,over:ratio>1.1025,
+            color:ratio<.12?'#aa6034':ratio<.4?'#e99c3a':ratio<.8?'#ffc453':'#fff3b0'};
+    }
+
+    drawBulbGlow(comp,x,y,radius) {
+        const v=this.bulbAppearance(comp),c=this.ctx;
+        if(!v.lit)return v;
+        const r=radius+8+v.level*28,g=c.createRadialGradient(x,y,radius*.3,x,y,r);
+        g.addColorStop(0,`rgba(255,211,70,${v.level*.8})`);g.addColorStop(.5,`rgba(255,184,30,${v.level*.45})`);g.addColorStop(1,'rgba(255,184,30,0)');
+        c.save();c.fillStyle=g;c.beginPath();c.arc(x,y,r,0,Math.PI*2);c.fill();c.restore();return v;
     }
 
     drawBulb(comp) {
         const ctx = this.ctx;
         ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-14,0); ctx.moveTo(14,0); ctx.lineTo(32,0); ctx.stroke();
-        // 发光
-        if (this.simulationRunning && comp.isLit) {
-            const ratio = comp.current / (comp.ratedCurrent || 0.3);
-            const brightness = Math.min(1.6, Math.sqrt(Math.max(ratio, 0)));
-            let color = ratio < 0.35 ? '#ffe9a8' : ratio < 0.75 ? '#ffd54f' : ratio < 1.05 ? '#ffb300' : '#ff5722';
-            const grad = ctx.createRadialGradient(0,0,2,0,0,18 + brightness * 10);
-            grad.addColorStop(0, '#fffdf0');
-            grad.addColorStop(0.45, color);
-            grad.addColorStop(1, `rgba(255,193,7,${0.18 + Math.min(brightness, 1) * 0.25})`);
-            ctx.fillStyle = grad;
-            ctx.shadowColor = color; ctx.shadowBlur = 8 + brightness * 26;
-        } else { ctx.fillStyle = '#f5f5f5'; }
+        const visual=this.drawBulbGlow(comp,0,0,12);
+        ctx.fillStyle=visual.lit?visual.color:this.symbolFill;
         ctx.beginPath(); ctx.arc(0,0,12,0,7); ctx.fill(); ctx.shadowBlur = 0;
         ctx.beginPath(); ctx.arc(0,0,12,0,7); ctx.stroke();
         // X
         const d = 12 * Math.SQRT1_2;
         ctx.beginPath(); ctx.moveTo(-d,-d); ctx.lineTo(d,d); ctx.moveTo(d,-d); ctx.lineTo(-d,d); ctx.stroke();
-        let txt = '灯泡';
-        if (this.simulationRunning && comp.isLit && comp.current > (comp.ratedCurrent||0.3)*1.05) txt = '灯泡(过载!)';
+        let txt = comp.label||'灯泡';
+        if (this.simulationRunning && comp.isLit && comp.current > (comp.ratedCurrent||0.3)*1.05) txt = (comp.label||'灯泡')+'(过载!)';
         this.label(comp, txt, 0, 28, {font:'12px "Microsoft YaHei"', color: txt.includes('过载')?'#e74c3c':'#333'});
         if (this.simulationRunning && comp.current > 1e-4)
             this.label(comp, comp.current.toFixed(2)+'A', 0, 42, {font:'11px Arial', color:'#7f8c8d'});
@@ -1941,7 +2034,7 @@ class CircuitSimulator {
     drawSwitch(comp) {
         const ctx = this.ctx;
         ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-18,0); ctx.moveTo(18,0); ctx.lineTo(32,0); ctx.stroke();
-        ctx.fillStyle = '#222';
+        ctx.fillStyle = this.schematicInk;
         ctx.beginPath(); ctx.arc(-18,0,3.5,0,7); ctx.fill();
         ctx.beginPath(); ctx.arc(18,0,3.5,0,7); ctx.fill();
         ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(-18,0);
@@ -1953,31 +2046,16 @@ class CircuitSimulator {
     }
 
     drawPotentiometer(comp) {
-        const ctx = this.ctx;
-        ctx.beginPath(); ctx.moveTo(-48,-28); ctx.lineTo(48,-28); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(-48,24); ctx.lineTo(-34,24); ctx.moveTo(34,24); ctx.lineTo(48,24); ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(-34,24);
-        for (let i = 0; i < 12; i++) {
-            const x1 = -34 + i * 68 / 12;
-            const x2 = -34 + (i + 0.5) * 68 / 12;
-            const x3 = -34 + (i + 1) * 68 / 12;
-            ctx.quadraticCurveTo(x2, i % 2 ? 18 : 30, x3, 24);
-        }
-        ctx.stroke();
-        const wx = -34 + 68 * comp.position;
-        ctx.lineWidth = 2.2;
-        ctx.beginPath(); ctx.moveTo(wx,-28); ctx.lineTo(wx,10); ctx.stroke();
-        ctx.fillStyle = '#222';
-        ctx.beginPath(); ctx.moveTo(wx,10); ctx.lineTo(wx-7,0); ctx.lineTo(wx+7,0); ctx.closePath(); ctx.fill();
-        this.label(comp, 'A', -48, 40, {font:'italic bold 13px Georgia'});
-        this.label(comp, 'B', 48, 40, {font:'italic bold 13px Georgia'});
-        this.label(comp, 'C', -48, -42, {font:'italic bold 13px Georgia'});
-        this.label(comp, 'D', 48, -42, {font:'italic bold 13px Georgia'});
-        this.label(comp, 'P', wx + 12, 2, {font:'italic bold 15px Georgia', color:'#2c3e50'});
-        this.label(comp, '滑动变阻器', 0, 55, {font:'12px "Microsoft YaHei"'});
-        if (this.simulationRunning && Math.abs(comp._current || 0) > 1e-9)
-            this.label(comp, Math.abs(comp._current).toFixed(2)+'A', 0, -56, {font:'bold 12px Arial', color:'#16a085'});
+        const ctx=this.ctx,terms=this.terminals(comp),bOnly=this.isTerminalConnected(comp,'b')&&!this.isTerminalConnected(comp,'a');
+        const fraction=bOnly?1-comp.position:comp.position,wx=-25+50*fraction;
+        ctx.strokeStyle=this.schematicInk;ctx.lineWidth=2.4;ctx.fillStyle=this.symbolFill;
+        ctx.fillRect(-30,14,60,20);ctx.strokeRect(-30,14,60,20);
+        ctx.beginPath();ctx.moveTo(-48,24);ctx.lineTo(-30,24);
+        if(terms.some(t=>t.x===48&&t.y===24&&!t.hidden)){ctx.moveTo(30,24);ctx.lineTo(48,24);}
+        ctx.moveTo(48,-28);ctx.lineTo(wx,-28);ctx.lineTo(wx,5);ctx.stroke();
+        ctx.fillStyle=this.schematicInk;ctx.beginPath();ctx.moveTo(wx,13);ctx.lineTo(wx-7,-1);ctx.lineTo(wx,3);ctx.lineTo(wx+7,-1);ctx.closePath();ctx.fill();
+        this.label(comp,'滑动变阻器',0,53,{font:'12px Microsoft YaHei'});
+        if(this.currentTool==='wire')terms.filter(t=>!t.hidden&&t.id!=='d').forEach(t=>this.label(comp,t.id.toUpperCase(),t.x,t.y+(t.y>0?17:-14),{font:'13px Georgia'}));
     }
 
     drawMeter(comp, letter) {
@@ -1990,7 +2068,7 @@ class CircuitSimulator {
             ctx.setLineDash([]); ctx.restore();
         }
         ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-18,0); ctx.moveTo(18,0); ctx.lineTo(32,0); ctx.stroke();
-        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0,0,18,0,7); ctx.fill();
+        ctx.fillStyle = this.symbolFill; ctx.beginPath(); ctx.arc(0,0,18,0,7); ctx.fill();
         ctx.beginPath(); ctx.arc(0,0,18,0,7); ctx.stroke();
         const range = comp.range;
         const over = Math.abs(comp.measurement) > range;
@@ -1998,6 +2076,7 @@ class CircuitSimulator {
         this.label(comp, letter, 0, 2, {font:'bold 20px Georgia', color:'#2c3e50'});
         this.label(comp, '+', -24, -12, {font:'bold 12px Arial', color:'#e74c3c'});
         this.label(comp, '−', 24, -12, {font:'bold 12px Arial', color:'#2980b9'});
+        if(comp.label)this.label(comp,comp.label,0,this.viewMode==='real'?98:28,{font:'bold 15px Georgia'});
         if (this.simulationRunning) {
             const val = letter === 'A' ? comp.measurement.toFixed(2)+'A' : comp.measurement.toFixed(2)+'V';
             const text = comp._polarityWarning ? '反接!' : (over ? '超量程!' : val);
@@ -2067,13 +2146,14 @@ class CircuitSimulator {
         c.fillStyle=g;c.beginPath();c.roundRect(-18,-1,36,36,9);c.fill();c.stroke();
         c.fillStyle='#888';c.fillRect(-11,-17,22,19);c.strokeRect(-11,-17,22,19);
         for(let x=-9;x<12;x+=5){c.fillStyle='#d8e0e6';c.fillRect(x,-16,2,15);}
-        const lit=this.simulationRunning&&comp.isLit;
-        c.fillStyle=lit?'#ffe99b':'#e2f5ff';c.shadowColor='#ffc441';c.shadowBlur=lit?22:0;
+        const visual=this.drawBulbGlow(comp,0,-36,23);
+        c.fillStyle=visual.lit?visual.color:'#e2f5ff';c.shadowBlur=0;
         c.beginPath();c.arc(0,-36,23,0,7);c.fill();c.stroke();c.shadowBlur=0;
         c.strokeStyle='#fff';c.lineWidth=4;c.beginPath();c.arc(0,-36,17,-1.8,.1);c.stroke();
-        c.strokeStyle='#efa923';c.lineWidth=1.6;c.beginPath();c.moveTo(-6,-31);c.lineTo(-3,-18);c.lineTo(3,-18);c.lineTo(6,-31);c.stroke();
+        c.strokeStyle=visual.lit?'#fff4c2':'#b27837';c.lineWidth=visual.lit?1.6+visual.level:1.6;c.beginPath();c.moveTo(-6,-31);c.lineTo(-3,-18);c.lineTo(3,-18);c.lineTo(6,-31);c.stroke();
         this.bindingPost(-42,24);this.bindingPost(42,24);
-        this.label(comp,'小灯泡',0,61,{font:'12px Microsoft YaHei'});
+        this.label(comp,(comp.label||'小灯泡')+(visual.over?'（过载）':''),0,61,{font:'12px Microsoft YaHei',color:visual.over?'#e74c3c':'#333'});
+        if(visual.lit)this.label(comp,(visual.power+1e-8).toFixed(2)+' W',0,77,{font:'12px Arial',color:'#7f8c8d'});
     }
 
     drawSwitchReal(comp) {
@@ -2089,80 +2169,29 @@ class CircuitSimulator {
     }
 
     drawPotentiometerReal(comp) {
-        const ctx = this.ctx;
-        const left = -78, right = 78, coilY = 2;
-        const wx = left + (right-left) * comp.position;
-        ctx.fillStyle = '#b7c0ca'; ctx.fillRect(left-28,32,12,38); ctx.strokeRect(left-28,32,12,38);
-        ctx.fillRect(right+16,32,12,38); ctx.strokeRect(right+16,32,12,38);
-        ctx.fillStyle = '#d8dee6'; ctx.fillRect(left-24,-16,28,56); ctx.strokeRect(left-24,-16,28,56);
-        ctx.fillRect(right-4,-16,28,56); ctx.strokeRect(right-4,-16,28,56);
-        ctx.strokeStyle = '#95a5a6'; ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.moveTo(left-18,-24); ctx.lineTo(right+18,-24); ctx.stroke();
-        ctx.strokeStyle = '#bdc3c7'; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.moveTo(left-18,-36); ctx.lineTo(right+18,-36); ctx.stroke();
-        const body = ctx.createLinearGradient(left,-12,right,18);
-        body.addColorStop(0, '#363636'); body.addColorStop(0.5, '#111'); body.addColorStop(1, '#4a4a4a');
-        ctx.fillStyle = body; ctx.fillRect(left,-12,right-left,30); ctx.strokeRect(left,-12,right-left,30);
-        ctx.strokeStyle = '#c0c7ce'; ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.arc(left,3,9,0,7); ctx.stroke();
-        ctx.beginPath(); ctx.arc(right,3,9,0,7); ctx.stroke();
-        ctx.strokeStyle = '#2b2b2b'; ctx.lineWidth = 0.7;
-        for (let x = left+3; x < right; x += 3) { ctx.beginPath(); ctx.moveTo(x,-12); ctx.lineTo(x-5,18); ctx.stroke(); }
-        const flowSegments = comp._potFlowSegments || [];
-        const topOut = this.isTerminalConnected(comp, 'c') ? -48 : (this.isTerminalConnected(comp, 'd') ? 48 : null);
-        const cWireFlow = this.connectedWireTerminalFlow(comp, 'c');
-        const dWireFlow = this.connectedWireTerminalFlow(comp, 'd');
-        if (this.simulationRunning && flowSegments.length) {
-            ctx.save();
-            ctx.strokeStyle = '#e5ac24'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-            ctx.shadowColor = '#f39c12'; ctx.shadowBlur = 0; ctx.fillStyle = '#fff176';
-            flowSegments.forEach(seg => {
-                const endX = seg.side === 'a' ? left : right;
-                const terminalY = 24;
-                let pts;
-                if (topOut !== null) {
-                    pts = seg.current >= 0
-                        ? [{x:endX,y:terminalY},{x:endX,y:coilY},{x:wx,y:coilY},{x:wx,y:-36},{x:topOut,y:-36}]
-                        : [{x:topOut,y:-36},{x:wx,y:-36},{x:wx,y:coilY},{x:endX,y:coilY},{x:endX,y:terminalY}];
-                } else {
-                    pts = seg.current >= 0
-                        ? [{x:endX,y:terminalY},{x:endX,y:coilY},{x:wx,y:coilY}]
-                        : [{x:wx,y:coilY},{x:endX,y:coilY},{x:endX,y:terminalY}];
-                }
-                ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
-                for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-                ctx.stroke();
-                this.drawFlowDotsOnPolyline(pts, 24, 70, 3.5);
-            });
-            ctx.restore();
+        const c=this.ctx,wx=-64+128*comp.position;
+        c.strokeStyle='#26313d';c.lineWidth=1.4;
+        for(const side of [-1,1]){
+            c.fillStyle='#9eb2ca';c.beginPath();c.moveTo(side*99,-46);c.quadraticCurveTo(side*110,-50,side*106,-27);c.lineTo(side*107,52);c.lineTo(side*117,79);c.lineTo(side*103,79);c.lineTo(side*96,39);c.lineTo(side*95,-31);c.closePath();c.fill();c.stroke();
         }
-        let cdFlow = 0;
-        if (Math.abs(cWireFlow) > 1e-6 && Math.abs(dWireFlow) > 1e-6) {
-            cdFlow = cWireFlow > 0 ? 1 : -1; // 正值画 C→D，负值画 D→C
-        }
-        if (this.simulationRunning && !flowSegments.length && Math.abs(cdFlow) > 1e-6) {
-            const pts = cdFlow >= 0 ? [{x:-48,y:-36},{x:48,y:-36}] : [{x:48,y:-36},{x:-48,y:-36}];
-            ctx.save();
-            ctx.strokeStyle = '#e5ac24'; ctx.lineWidth = 3; ctx.lineCap = 'round';
-            ctx.shadowColor = '#f39c12'; ctx.shadowBlur = 0; ctx.fillStyle = '#fff176';
-            ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(pts[1].x, pts[1].y); ctx.stroke();
-            this.drawFlowDotsOnPolyline(pts, 24, 70, 3.5);
-            ctx.restore();
-        }
-        ctx.fillStyle = '#b87333'; ctx.fillRect(wx-9,-58,18,44); ctx.strokeRect(wx-9,-58,18,44);
-        ctx.beginPath(); ctx.moveTo(wx,-14); ctx.lineTo(wx-7,6); ctx.lineTo(wx+7,6); ctx.closePath(); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = '#2c3e50'; ctx.fillRect(wx-26,-76,52,20); ctx.strokeRect(wx-26,-76,52,20);
-        this.label(comp, '滑片P', wx, -66, {font:'bold 10px "Microsoft YaHei"', color:'#fff'});
-        ctx.strokeStyle = '#b87333'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(wx,-36); ctx.lineTo(wx,coilY); ctx.stroke();
-        ctx.strokeStyle = '#222'; ctx.lineWidth = 2; ctx.fillStyle = '#c0392b';
-        [[-88,24,'A'],[88,24,'B'],[-48,-28,'C'],[48,-28,'D']].forEach(([px,py,lbl])=>{
-            ctx.beginPath(); ctx.arc(px,py,5,0,7); ctx.fill(); ctx.stroke();
-            this.label(comp, lbl, px, py + (py > 0 ? 17 : -16), {font:'italic bold 12px Georgia'});
-        });
-        if (this.simulationRunning && (flowSegments.length || Math.abs(cdFlow) > 1e-6))
-            this.label(comp, Math.max(Math.abs(comp._current || 0), Math.abs(cWireFlow), Math.abs(dWireFlow)).toFixed(2)+'A', 0, -92, {font:'bold 12px Arial', color:'#16a085'});
-        this.label(comp, '滑动变阻器', 0, 58, {font:'12px "Microsoft YaHei"'});
+        const ceramic=c.createLinearGradient(0,-10,0,39);ceramic.addColorStop(0,'#92989e');ceramic.addColorStop(.45,'#f2f4f5');ceramic.addColorStop(1,'#80868c');
+        c.fillStyle=ceramic;c.beginPath();c.roundRect(-95,-10,190,49,8);c.fill();c.stroke();
+        const copper=c.createLinearGradient(0,-10,0,39);copper.addColorStop(0,'#873805');copper.addColorStop(.45,'#d68f32');copper.addColorStop(.64,'#ffe6a3');copper.addColorStop(1,'#823601');
+        c.fillStyle=copper;c.fillRect(-65,-10,130,49);c.strokeStyle='#783504';c.lineWidth=.6;
+        for(let x=-65;x<=65;x+=2.3){c.beginPath();c.moveTo(x,-10);c.lineTo(x-2,39);c.stroke();}
+        c.strokeStyle='#fff3be';c.lineWidth=1.4;c.beginPath();c.moveTo(-65,19);c.lineTo(65,19);c.stroke();
+        c.strokeStyle='#42464b';c.lineWidth=5;c.beginPath();c.moveTo(-112,-30);c.lineTo(112,-30);c.stroke();
+        c.strokeStyle='#e5e8ec';c.lineWidth=2.8;c.beginPath();c.moveTo(-112,-30);c.lineTo(112,-30);c.stroke();
+        c.strokeStyle='#333';c.lineWidth=1.3;
+        for(const x of [-76,76]){c.beginPath();c.moveTo(x,24);c.lineTo(x,-10);c.lineTo(Math.sign(x)*65,-10);c.stroke();this.bindingPost(x,24,true);}
+        // C and D connect to the conducting rod, not the resistance wire.
+        for(const x of [-112,112]){c.fillStyle=ceramic;c.beginPath();c.roundRect(x-9,-36,18,12,3);c.fill();c.stroke();}
+        const slider=c.createLinearGradient(0,-36,0,34);slider.addColorStop(0,'#a6a9ac');slider.addColorStop(.5,'#f0f1f2');slider.addColorStop(1,'#a0a4a7');
+        c.fillStyle=slider;c.beginPath();c.moveTo(wx-7,-37);c.lineTo(wx+7,-37);c.lineTo(wx+4,30);c.quadraticCurveTo(wx,38,wx-4,30);c.closePath();c.fill();c.stroke();
+        c.fillStyle='#b6cce0';c.beginPath();c.moveTo(wx-13,-55);c.quadraticCurveTo(wx,-50,wx+13,-55);c.lineTo(wx+16,-38);c.lineTo(wx-16,-38);c.closePath();c.fill();c.stroke();
+        this.label(comp,'P',wx,-70,{font:'bold 17px Georgia'});
+        for(const [x,y,label,ly] of [[-76,24,'A',52],[76,24,'B',52],[-112,-30,'C',-51],[112,-30,'D',-51]])this.label(comp,label,x,ly,{font:'bold 16px Georgia'});
+        this.label(comp,'滑动变阻器',0,98,{font:'12px Microsoft YaHei'});
     }
 
     drawMeterReal(comp, letter) {
@@ -2175,6 +2204,7 @@ class CircuitSimulator {
         const angle=(-140+100*fraction)*Math.PI/180;
         ctx.strokeStyle='#282522';ctx.lineWidth=.8;ctx.beginPath();ctx.moveTo(0,-4.8);
         ctx.lineTo(272*.24*Math.cos(angle),-4.8+272*.24*Math.sin(angle));ctx.stroke();
+        if(comp.label)this.label(comp,comp.label,0,this.viewMode==='real'?98:28,{font:'bold 15px Georgia'});
         if (this.simulationRunning) {
             const val = letter === 'A' ? comp.measurement.toFixed(2)+'A' : comp.measurement.toFixed(2)+'V';
             const over = Math.abs(comp.measurement) > comp.range;
@@ -2190,6 +2220,7 @@ class CircuitSimulator {
         this.components.forEach(comp => {
             const drawn = new Set();
             this.getAbsoluteTerminals(comp).forEach(t => {
+                if(t.hidden)return;
                 const dk = Math.round(t.x) + '_' + Math.round(t.y);
                 if (drawn.has(dk)) return;
                 drawn.add(dk);
@@ -2208,13 +2239,10 @@ class CircuitSimulator {
     }
 
     highlight(comp) {
-        const ctx = this.ctx;
-        ctx.save();
-        ctx.translate(comp.x, comp.y); ctx.rotate(comp.rotation*Math.PI/180);
-        const r = COMPONENT_DEFS[comp.type].selRadius;
-        ctx.strokeStyle = '#3498db'; ctx.lineWidth = 1.5; ctx.setLineDash([5,4]);
-        ctx.strokeRect(-r, -r, r*2, r*2);
-        ctx.setLineDash([]); ctx.restore();
+        const ctx=this.ctx;ctx.save();ctx.strokeStyle='#3498db';ctx.lineWidth=1.5;ctx.setLineDash([5,4]);
+        if(this.viewMode==='real'){const b=this.realComponentBox(comp,6);ctx.strokeRect(b.left,b.top,b.right-b.left,b.bottom-b.top);}
+        else {const p=this.componentPos(comp),r=COMPONENT_DEFS[comp.type].selRadius;ctx.translate(p.x,p.y);ctx.rotate(comp.rotation*Math.PI/180);ctx.strokeRect(-r,-r,r*2,r*2);}
+        ctx.restore();
     }
 
     /* ============================================================
@@ -2360,6 +2388,7 @@ class CircuitSimulator {
         const canvas = document.getElementById('mini-canvas');
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle=this.darkMode?'#1e293b':'#fff';ctx.fillRect(0,0,canvas.width,canvas.height);
         ctx.save();
         const comps = this.schematicReference.components;
         if (!comps.length) { ctx.restore(); return; }
@@ -2390,23 +2419,27 @@ const EXPERIMENTS = [
         subtitle: '串联各处电流相等',
         goal: '验证串联电路中各处电流相等。',
         steps: [
-            '电源、开关、两个灯泡 L₁ L₂ 串联，电流表测干路电流。',
-            '闭合开关（双击开关），观察电流表读数。',
-            '把电流表分别移到不同位置重新连线，比较读数是否相同。',
-            '结论：串联电路中电流处处相等 I₁=I₂=I。'
+            '将 A₁、A₂、A₃ 分别接在第一个灯泡前、两灯之间、第二个灯泡后。',
+            '闭合开关（双击开关），同时观察三个电流表的示数。',
+            '改变电源电压或灯泡电阻，再比较三处电流。',
+            '结论：串联电路各处电流相等，I₁=I₂=I₃。'
         ],
         build(sim) {
-            const bat = sim.createComponent('battery', {x:520, y:440, voltage:3});
-            const sw = sim.createComponent('switch', {x:240, y:440, state:'closed'});
-            const am = sim.createComponent('ammeter', {x:240, y:200});
-            const l1 = sim.createComponent('bulb', {x:480, y:200, resistance:10});
-            const l2 = sim.createComponent('bulb', {x:680, y:200, resistance:10});
-            sim.connectTerminalsReal(bat,'pos', sw,'b', [], [{x:430,y:500},{x:320,y:500}]);
-            sim.connectTerminalsReal(sw,'a', am,'r0_6', [{x:120,y:440},{x:120,y:200}], [{x:90,y:420},{x:90,y:260},{x:200,y:250}]);
-            sim.connectTerminalsReal(am,'neg', l1,'shell', [], [{x:250,y:130},{x:410,y:140}]);
-            sim.connectTerminalsReal(l1,'tip', l2,'shell', [], [{x:535,y:255},{x:605,y:255}]);
-            sim.connectTerminalsReal(l2,'tip', bat,'neg', [{x:840,y:200},{x:840,y:440}], [{x:820,y:260},{x:820,y:500},{x:600,y:500}]);
-            sim.selectedComponent = null;
+            const bat=sim.createComponent('battery',{x:540,y:480,voltage:3});
+            const sw=sim.createComponent('switch',{x:180,y:480,state:'closed'});
+            const a1=sim.createComponent('ammeter',{x:180,y:180,label:'A1'});
+            const l1=sim.createComponent('bulb',{x:360,y:180,resistance:10,label:'L1'});
+            const a2=sim.createComponent('ammeter',{x:540,y:180,label:'A2'});
+            const l2=sim.createComponent('bulb',{x:720,y:180,resistance:10,label:'L2'});
+            const a3=sim.createComponent('ammeter',{x:900,y:180,label:'A3'});
+            sim.connectTerminals(bat,'pos',sw,'b');
+            sim.connectTerminals(sw,'a',a1,'r0_6',[{x:80,y:480},{x:80,y:180}]);
+            sim.connectTerminals(a1,'neg',l1,'shell');
+            sim.connectTerminals(l1,'tip',a2,'r0_6');
+            sim.connectTerminals(a2,'neg',l2,'shell');
+            sim.connectTerminals(l2,'tip',a3,'r0_6');
+            sim.connectTerminals(a3,'neg',bat,'neg',[{x:1020,y:180},{x:1020,y:480}]);
+            sim.selectedComponent=null;
         }
     },
     {
@@ -2471,7 +2504,7 @@ const EXPERIMENTS = [
             sim.connectTerminals(bat,'pos', am,'r0_6', [{x:220,y:500}]);
             sim.connectTerminals(am,'neg', r,'a', [{x:220,y:220}]);
             sim.connectTerminals(r,'b', pot,'a', [{x:500,y:220},{x:500,y:238}]);
-            sim.connectTerminals(pot,'c', sw,'b', [{x:578,y:150},{x:760,y:150},{x:760,y:500}]);
+            sim.connectTerminals(pot,'c', sw,'b', [{x:658,y:150},{x:760,y:150},{x:760,y:500}]);
             sim.connectTerminals(sw,'a', bat,'neg');
 
             // 电压表并联在待测电阻 R 两端
@@ -2496,9 +2529,14 @@ const EXPERIMENTS = [
             const pot = sim.createComponent('potentiometer', {x:430, y:180, resistance:20, position:0.5});
             const am = sim.createComponent('ammeter', {x:630, y:180});
             const bulb = sim.createComponent('bulb', {x:820, y:180, resistance:10});
+            Object.assign(bat,{realX:400,realY:160});
+            Object.assign(sw,{realX:150,realY:350});
+            Object.assign(pot,{realX:400,realY:520});
+            Object.assign(am,{realX:820,realY:160});
+            Object.assign(bulb,{realX:820,realY:520});
             sim.connectTerminals(bat,'pos', sw,'b');
             sim.connectTerminals(sw,'a', pot,'a', [{x:190,y:198}]);
-            sim.connectTerminals(pot,'c', am,'r0_6', [{x:398,y:140},{x:598,y:140}]);
+            sim.connectTerminals(pot,'c', am,'r0_6', [{x:478,y:120},{x:598,y:120}]);
             sim.connectTerminals(am,'neg', bulb,'shell');
             sim.connectTerminals(bulb,'tip', bat,'neg', [{x:940,y:180},{x:940,y:520}]);
             sim.selectedComponent = pot; // 直接选中变阻器方便调节
