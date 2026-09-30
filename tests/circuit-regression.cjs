@@ -113,3 +113,41 @@ for(let fixture=0;fixture<5;fixture++)for(const reverse of [false,true]){
  const geometry=JSON.stringify(m.components.map(c=>[c.x,c.y,c.schematicFlipX]));m.layoutSchematicCircuit();assert.equal(JSON.stringify(m.components.map(c=>[c.x,c.y,c.schematicFlipX])),geometry);
  console.log(`PASS schematic layout fixture ${fixture+1}, ${reverse?'reversed':'original'}: orthogonal, clear, unchanged topology/readings`);
 }
+
+// All four rheostat contacts, both polarities, and the unused coil portion.
+for(const lower of ['a','b'])for(const upper of ['c','d'])for(const reversed of [false,true]){
+ const m=build(3),pot=m.components.find(c=>c.type==='potentiometer');
+ for(const w of m.wires)for(const end of ['start','end'])if(w[end].compId===pot.id)w[end].termId=['a','b'].includes(w[end].termId)?lower:upper;
+ if(reversed)m.components.find(c=>c.type==='battery').voltage*=-1;
+ pot.position=.37;m.solveCircuit();
+ for(const view of ['real','schematic','principle']){
+  const paths=m.potCurrentPaths(pot,view);assert.equal(paths.length,3,'only live coil half, slider and connected rod half animate');
+  assert.ok(paths.every(p=>p.current>1e-6));
+  const top=view==='principle'?55:view==='real'?-30:-28;
+  const rod=paths.find(p=>p.points.every(q=>q.y===top));assert.ok(rod);
+  const terminalX=view==='principle'?(upper==='c'?80:520):view==='real'?(upper==='c'?-112:112):48;
+  assert.ok(rod.points.some(p=>p.x===terminalX),'rod must reach actual connected post');
+ }
+ m.simulationRunning=false;assert.equal(m.potCurrentPaths(pot,'real').length,0);
+}
+const oriented=buildUserMixed();oriented.components.forEach((c,i)=>{c.rotation=i%2?90:0;c.realRotation=c.rotation;});
+const rotations=JSON.stringify(oriented.components.map(c=>[c.rotation,c.realRotation]));
+for(const view of ['real','schematic']){oriented.viewMode=view;oriented.layoutCircuit(true,view==='real');assert.equal(JSON.stringify(oriented.components.map(c=>[c.rotation,c.realRotation])),rotations);assert.ok(oriented.components.every(c=>!c.realFlipX&&!c.schematicFlipX));}
+console.log('PASS rheostat live paths in three views, four contact combinations, both polarities, stopped flow, and preserved rotations');
+function buildFeedback(){
+ const m=build(0);m.components=[];m.wires=[];
+ const b=m.createComponent('battery',{voltage:3,x:400,y:100}),sw=m.createComponent('switch',{state:'closed',x:100,y:400}),l=m.createComponent('bulb',{x:260,y:400}),r=m.createComponent('resistor',{resistance:20,x:440,y:280}),l2=m.createComponent('bulb',{x:440,y:500}),am=m.createComponent('ammeter',{x:620,y:400}),p=m.createComponent('potentiometer',{x:800,y:400,position:.47});
+ const w=(a,ta,b,tb)=>m.connectTerminals(a,ta,b,tb,[],'both');
+ w(b,'pos',p,'c');w(p,'a',am,'r0_6');w(am,'neg',l2,'tip');w(l2,'tip',r,'b');w(r,'a',l2,'shell');w(l2,'shell',l,'tip');w(l,'shell',sw,'b');w(sw,'a',b,'neg');return m;
+}
+for(const view of ['real','schematic']){
+ const m=buildFeedback();m.viewMode=view;m.layoutCircuit(true,view==='real');m.solveCircuit();
+ if(view==='schematic'){m.resolveRealWire=m.resolveWire;m.sampleRealWirePath=p=>p;}
+ assertSafeRoutes(m);console.log('PASS latest screenshot circuit, fixed orientation, '+view);
+}
+const balanced=buildFeedback();balanced.solveCircuit();
+assert.ok(balanced.wires.every(w=>w._flowMag>1e-6&&w._flowDir===1),'all wires in screenshot fixture must flow from their start to end');
+const pot=balanced.components.find(c=>c.type==='potentiometer');
+assert.ok(Math.abs(balanced.connectedWireTerminalFlow(pot,'c')+pot._potI1+pot._potI2)<1e-6,'rod and resistor currents must balance');
+balanced.components.find(c=>c.type==='switch').state='open';balanced.solveCircuit();assert.ok(balanced.wires.every(w=>w._flowMag===0));
+console.log('PASS complete branch current balance, switch continuity and open-circuit animation');

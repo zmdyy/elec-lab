@@ -1001,9 +1001,9 @@ class CircuitSimulator {
     layoutCircuit(force,real) {
         // Both views share topology reduction; each keeps its own geometry and manual edits.
         const signatureKey=real?'_realLayoutSignature':'_schematicLayoutSignature';
-        const put=(c,x,y,flip=false)=>{if(real){c.realX=x;c.realY=y;c.realRotation=0;c.realFlipX=flip;}else{c.x=x;c.y=y;c.rotation=0;c.schematicFlipX=flip;}};
+        const put=(c,x,y)=>{if(real){c.realX=x;c.realY=y;c.realFlipX=false;}else{c.x=x;c.y=y;c.schematicFlipX=false;}};
         const wires=this.activeWires().length?this.activeWires():this.wires.filter(w=>w.view!=='real');
-        const signature=JSON.stringify([this.components.map(c=>[c.id,c.type]),wires.map(w=>[w.start,w.end])]);
+        const signature=JSON.stringify(['fixed-orientation-v2',this.components.map(c=>[c.id,c.type]),wires.map(w=>[w.start,w.end])]);
         if(!force&&this[signatureKey]===signature)return;
         this[signatureKey]=signature;
         const parent=new Map(),find=k=>{if(!parent.has(k))parent.set(k,k);let r=k;while(parent.get(r)!==r)r=parent.get(r);return r;};
@@ -1039,6 +1039,12 @@ class CircuitSimulator {
             if(!changed)break;
         }
         const root=edges.find(e=>(e.u===source&&e.v===target)||(e.u===target&&e.v===source));
+        const portDirection=(e,from)=>{
+            if(e.kind==='leaf'){const ports=this.terminals(e.comp),a=ports.find(t=>t.id===e.ports[from]),b=ports.find(t=>t.id===e.ports[from===e.u?e.v:e.u]);return a&&b?Math.sign(b.x-a.x):0;}
+            if(e.kind==='parallel')return e.children.reduce((sum,c)=>sum+portDirection(c,from),0);
+            let node=from,total=0;for(const child of from===e.u?e.children:[...e.children].reverse()){total+=portDirection(child,node);node=child.u===node?child.v:child.u;}return total;
+        };
+        const rightToLeft=real||(root&&portDirection(root,source)<0);
         const placed=new Set();
         const measure=e=>{
             if(e.kind==='leaf'){const c=e.comp;if(!real)return {w:180,h:c.type==='potentiometer'?180:140};return {w:c.type==='potentiometer'?340:['ammeter','voltmeter'].includes(c.type)?220:180,h:['ammeter','voltmeter','potentiometer'].includes(c.type)?280:180};}
@@ -1049,21 +1055,18 @@ class CircuitSimulator {
             const d=measure(e);
             if(e.kind==='leaf'){
                 const c=e.comp;put(c,x+d.w/2,y+d.h/2);
-                const ports=this.terminals(c),input=ports.find(t=>t.id===e.ports[from]),output=ports.find(t=>t.id===e.ports[from===e.u?e.v:e.u]);
-                // Keep instrument faces upright. Mirror only physical bodies whose leads face against the path.
-                if((!real||!['ammeter','voltmeter'].includes(c.type))&&input&&output)put(c,x+d.w/2,y+d.h/2,input.x<output.x);
                 placed.add(c.id);return;
             }
             if(e.kind==='parallel'){
                 let yy=y;for(const child of e.children){const cd=measure(child);place(child,from,x+(d.w-cd.w)/2,yy);yy+=cd.h+70;}return;
             }
-            const children=from===e.u?e.children:[...e.children].reverse();let xx=x+d.w,node=from;
-            for(const child of children){const cd=measure(child);xx-=cd.w;place(child,node,xx,y+(d.h-cd.h)/2);node=child.u===node?child.v:child.u;xx-=36;}
+            const children=from===e.u?e.children:[...e.children].reverse();let xx=rightToLeft?x+d.w:x,node=from;
+            for(const child of children){const cd=measure(child);if(rightToLeft)xx-=cd.w;place(child,node,xx,y+(d.h-cd.h)/2);node=child.u===node?child.v:child.u;xx+=rightToLeft?-36:cd.w+36;}
         };
         if(root){
             const d=measure(root);place(root,source,140,280);
             put(battery,140+d.w/2,110,!real||battery.voltage<=3);placed.add(battery.id);
-            wires.forEach(w=>{const n=find(this.wireEndKey(w,'start'));w[real?'_realLaneX':'_schematicLaneX']=n===source?140+d.w+65:n===target?75:null;});
+            wires.forEach(w=>{const n=find(this.wireEndKey(w,'start'));w[real?'_realLaneX':'_schematicLaneX']=n===source?(rightToLeft?140+d.w+65:75):n===target?(rightToLeft?75:140+d.w+65):null;});
             this._realLayoutKind='series-parallel';
         }else{
             // Unsupported bridge/multi-terminal circuits: spread existing geometry without changing connections.
@@ -1109,6 +1112,36 @@ class CircuitSimulator {
         this.drawPotPrinciple();
     }
 
+    potCurrentPaths(comp,view) {
+        if(!this.simulationRunning)return [];
+        const p=comp.position,paths=[],add=(points,current)=>{if(Math.abs(current)>1e-6)paths.push({points:current>0?points:[...points].reverse(),current:Math.abs(current)});};
+        const principle=view==='principle',real=view==='real',bOnly=this.isTerminalConnected(comp,'b')&&!this.isTerminalConnected(comp,'a');
+        const left=principle?150:real?-64:-25,right=principle?450:real?64:25;
+        const fraction=!real&&!principle&&bOnly?1-p:p,x=left+(right-left)*fraction,y=principle?210:real?19:24,top=principle?55:real?-30:-28;
+        const ax=principle?80:real?-76:bOnly?48:-48,bx=principle?520:real?76:bOnly?-48:48;
+        const resistance=(from,to)=>{const pts=[];const count=Math.max(1,Math.ceil(Math.abs(to-from)/3));for(let i=0;i<=count;i++){const xx=from+(to-from)*i/count;pts.push({x:xx,y:y+(principle?(()=>{const u=(xx-150)/12.5,k=Math.floor(u),t=u-k;return (k%2?28:-28)*t*(1-t);})():0)});}return pts;};
+        const aEdge=!real&&!principle&&bOnly?right:left,bEdge=!real&&!principle&&bOnly?left:right;
+        add([{x:ax,y:real?24:y},{x:aEdge,y},...resistance(aEdge,x)],comp._potI1||0);
+        add([{x:bx,y:real?24:y},{x:bEdge,y},...resistance(bEdge,x)],comp._potI2||0);
+        const slider=(comp._potI1||0)+(comp._potI2||0);
+        add([{x,y},{x,y:top}],slider);
+        for(const term of ['c','d']){
+            const flow=this.connectedWireTerminalFlow(comp,term);
+            const tx=principle?(term==='c'?80:520):real?(term==='c'?-112:112):48;
+            add([{x:tx,y:top},{x,y:top}],flow);
+        }
+        return paths;
+    }
+    drawPotCurrent(comp,view,ctx=this.ctx) {
+        const previous=this.ctx;this.ctx=ctx;ctx.save();
+        for(const path of this.potCurrentPaths(comp,view)){
+            ctx.strokeStyle=this.flowColor;ctx.lineWidth=view==='principle'?3:2.5;ctx.lineJoin='round';
+            ctx.beginPath();path.points.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.stroke();
+            this.drawFlowDotsOnPolyline(path.points,view==='principle'?32:19,45,3);
+        }
+        ctx.restore();this.ctx=previous;
+    }
+
     drawPotPrinciple() {
         if(!this.showPotPrinciple)return;
         const comp=this.selectedComponent?.type==='potentiometer'?this.selectedComponent:this.components.find(c=>c.type==='potentiometer');
@@ -1125,6 +1158,7 @@ class CircuitSimulator {
         for(const [px,py,label,tx] of [[80,55,'C',48],[520,55,'D',553],[80,210,'A',48],[520,210,'B',553]]){
             ctx.fillStyle=bg;ctx.beginPath();ctx.arc(px,py,11,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.fillStyle=ink;ctx.fillText(label,tx,py);
         }
+        this.drawPotCurrent(comp,'principle',ctx);
         document.getElementById('pot-principle-note').textContent=`A—P：${(comp.resistance*comp.position).toFixed(1)} Ω　 P—B：${(comp.resistance*(1-comp.position)).toFixed(1)} Ω`;
     }
 
@@ -1532,33 +1566,21 @@ class CircuitSimulator {
             if (s.comp.type === 'battery') { const out = -I; addF(s.kp, out); addF(s.kn, -out); }
             else { addF(s.kp, -I); addF(s.kn, +I); }   // 电流表：+→- 内部
         });
-        // 滑片两个接线柱(c,d)同节点，电流值相同
-        this.components.forEach(c => {
-            if (c.type === 'potentiometer') termFlow[c.id+'_d'] = termFlow[c.id+'_c'] || 0;
-        });
-        const degree = {};
-        this.activeWires().forEach(w => {
-            const s = this.wireEndKey(w,'start'), e = this.wireEndKey(w,'end');
-            if (s) degree[s] = (degree[s]||0)+1;
-            if (e) degree[e] = (degree[e]||0)+1;
-        });
-        this._hasFlow = false;
-        this.activeWires().forEach(w => {
-            const s = this.wireEndKey(w,'start'), e = this.wireEndKey(w,'end');
-            const fS = termFlow[s] || 0, fE = termFlow[e] || 0;
-            const aS = Math.abs(fS), aE = Math.abs(fE);
-            let mag, fdir;
-            if (aS < 1e-9 && aE >= 1e-9) { mag = aE; fdir = fE >= 0 ? -1 : 1; }
-            else if (aE < 1e-9 && aS >= 1e-9) { mag = aS; fdir = fS >= 0 ? 1 : -1; }
-            else if (degree[s] === 1) { mag = aS; fdir = fS >= 0 ? 1 : -1; }
-            else if (degree[e] === 1) { mag = aE; fdir = fE >= 0 ? -1 : 1; }
-            else if (aS >= aE) { mag = aS; fdir = fS >= 0 ? 1 : -1; }
-            else { mag = aE; fdir = fE >= 0 ? -1 : 1; }
-            w._flowMag = mag; w._flowDir = fdir;
-            if (mag > 1e-5) this._hasFlow = true;
-            if (s) this.setTerminalWireFlow(s, fS);
-            if (e) this.setTerminalWireFlow(e, fE);
-        });
+        // Kirchhoff current balance on a spanning tree of each ideal-wire net.
+        // The rod C-D is an internal link; injecting the same current at both posts doubles it.
+        const adjacency=new Map(),link=(a,b,w=null)=>{for(const [u,v] of [[a,b],[b,a]]){if(!adjacency.has(u))adjacency.set(u,[]);adjacency.get(u).push({to:v,wire:w});}};
+        this.activeWires().forEach(w=>{w._flowMag=0;w._flowDir=1;link(this.wireEndKey(w,'start'),this.wireEndKey(w,'end'),w);});
+        this.components.filter(c=>c.type==='potentiometer').forEach(c=>link(c.id+'_c',c.id+'_d'));
+        this.components.filter(c=>c.type==='switch'&&c.state==='closed').forEach(c=>link(c.id+'_a',c.id+'_b'));
+        const seen=new Set();this._hasFlow=false;
+        for(const root of adjacency.keys()){
+            if(seen.has(root))continue;
+            const order=[root],parents=new Map(),sum=new Map();seen.add(root);
+            for(let i=0;i<order.length;i++){const u=order[i];sum.set(u,termFlow[u]||0);for(const edge of adjacency.get(u)||[])if(!seen.has(edge.to)){seen.add(edge.to);parents.set(edge.to,{node:u,wire:edge.wire});order.push(edge.to);}}
+            for(let i=order.length-1;i>0;i--){const u=order[i],edge=parents.get(u),flow=sum.get(u);sum.set(edge.node,(sum.get(edge.node)||0)+flow);
+                if(edge.wire){const signed=flow*(this.wireEndKey(edge.wire,'start')===u?1:-1);edge.wire._flowMag=Math.abs(signed);edge.wire._flowDir=signed>=0?1:-1;if(Math.abs(signed)>1e-5)this._hasFlow=true;}
+            }
+        }
 
         // —— 7. 输出整体测量 ——
         const I = Math.abs(mainCurrent);
@@ -1719,6 +1741,7 @@ class CircuitSimulator {
         ctx.scale(this.scale, this.scale);
 
         if (this.showGrid) this.drawGrid();
+        this._drawingNetwork=true;
         if (this.viewMode === 'real') {
             this.components.forEach(c => this.drawComponent(c));
             this.activeWires().forEach(w => this.drawWire(w, w === this.selectedWire));
@@ -1730,6 +1753,8 @@ class CircuitSimulator {
             this.components.forEach(c => this.drawComponent(c));
             this.drawAllTerminals();
         }
+        this._drawingNetwork=false;
+        if(this.simulationRunning)this.drawNetworkFlow();
         if (this.selectedComponent) this.highlight(this.selectedComponent);
         this.drawPotPrinciple();
 
@@ -1768,7 +1793,7 @@ class CircuitSimulator {
         ctx.fillStyle = this.schematicInk;
         (w.bends || []).forEach(b => { ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, 7); ctx.fill(); });
         // 电流流动光点动画
-        if (this.simulationRunning && Math.abs(w._flowMag || 0) > 1e-9) this.drawFlow(w, pts);
+        if (!this._drawingNetwork && this.simulationRunning && Math.abs(w._flowMag || 0) > 1e-9) this.drawFlow(w, pts);
         if (selected) this.drawWireControlPoints(w);
     }
 
@@ -1838,19 +1863,51 @@ class CircuitSimulator {
         if(this._routeKey!==key) {
             this._routeKey=key; this._routes=new Map();
             const occupied=[];
+            const roots=new Map(),find=k=>{if(!roots.has(k))roots.set(k,k);while(roots.get(k)!==k)k=roots.get(k);return k;};
+            this.activeWires().forEach(w=>roots.set(find(this.wireEndKey(w,'start')),find(this.wireEndKey(w,'end'))));
+            this.components.filter(c=>c.type==='potentiometer').forEach(c=>roots.set(find(c.id+'_c'),find(c.id+'_d')));
+            this.activeWires().forEach(w=>{w._routeNet=find(this.wireEndKey(w,'start'));});
+            this._netLanes=new Map();
+            for(const net of new Set(this.activeWires().map(w=>w._routeNet))){
+                const ends=new Map();this.activeWires().filter(w=>w._routeNet===net).forEach(w=>['start','end'].forEach(end=>ends.set(this.wireEndKey(w,end),w[end])));
+                if(ends.size<3)continue;
+                const exits=[...ends.values()].map(e=>{const p=this.terminalPos(e.compId,e.termId),q=this.terminalOutPoint(e.compId,e.termId,p);return {p,q};});
+                if(exits.every(e=>e.q.x<e.p.x-.1))this._netLanes.set(net,Math.min(...exits.map(e=>e.q.x))-20);
+                if(exits.every(e=>e.q.x>e.p.x+.1))this._netLanes.set(net,Math.max(...exits.map(e=>e.q.x))+20);
+            }
             // Reserve every terminal exit before routing; otherwise later leads cross earlier wires.
             for(const wire of this.activeWires()) for(const end of ['start','end']) {
                 const p=this.wireEndPos(wire,end),e=wire[end];
                 occupied.push([p,this.terminalOutPoint(e.compId,e.termId,p),wire]);
             }
-            for(const wire of this.activeWires()) {
-                const a=this.wireEndPos(wire,'start'), b=this.wireEndPos(wire,'end');
-                const bends=this.viewMode==='real'?wire.realBends:(!wire.autoSchematic?wire.bends:null);
-                const path=bends?.length ? [a,...bends,b] : this.routeRealWire(wire,a,b,occupied);
-                this._routes.set(wire,path);
-                const smooth=path;
-                for(let i=1;i<smooth.length;i++) occupied.push([smooth[i-1],smooth[i],wire]);
+            const exits=[...occupied];
+            let order=[...this.activeWires()].sort((a,b)=>this.wireEndKey(a,'start').localeCompare(this.wireEndKey(b,'start'),undefined,{numeric:true})||this.wireEndKey(a,'end').localeCompare(this.wireEndKey(b,'end'),undefined,{numeric:true}));
+            let best=null,bestScore=Infinity;
+            for(let attempt=0;attempt<8;attempt++){
+                occupied.length=0;occupied.push(...exits);const routes=new Map();
+                for(const wire of order){
+                    const a=this.wireEndPos(wire,'start'),b=this.wireEndPos(wire,'end');
+                    const bends=this.viewMode==='real'?wire.realBends:(!wire.autoSchematic?wire.bends:null);
+                    const path=bends?.length?[a,...bends,b]:this.routeRealWire(wire,a,b,occupied);
+                    routes.set(wire,path);
+                    for(let i=1;i<path.length;i++)occupied.push([path[i-1],path[i],wire]);
+                }
+                const conflicts=new Map();let score=order.filter(w=>w._routeBlocked).length*100;
+                for(let i=0;i<order.length;i++)for(let j=0;j<i;j++){
+                    const u=order[i],v=order[j];if(u._routeNet===v._routeNet)continue;
+                    const p=routes.get(u),q=routes.get(v);
+                    if(p.slice(1).some((b,k)=>q.slice(1).some((d,l)=>this.segmentsIntersect(p[k],b,q[l],d)))){
+                        score++;conflicts.set(u,(conflicts.get(u)||0)+1);conflicts.set(v,(conflicts.get(v)||0)+1);
+                    }
+                }
+                if(score<bestScore){bestScore=score;best=routes;}
+                if(!score||!conflicts.size)break;
+                // Rip up a conflicting route and give it priority on the next pass.
+                const trouble=[...conflicts].sort((a,b)=>b[1]-a[1])[attempt%conflicts.size][0];
+                order=attempt%2?[...order.filter(w=>w!==trouble),trouble]:[trouble,...order.filter(w=>w!==trouble)];
             }
+            this._routes=best;
+
         }
         return this._routes.get(w) || [start,end];
     }
@@ -1865,10 +1922,10 @@ class CircuitSimulator {
         }
         // Supply/return nets use the outside rails of the physical layout. This prevents
         // the return lead of an instrument from getting trapped behind its supply lead.
-        const outsideLane=this.viewMode==='real'?w._realLaneX:w._schematicLaneX;
+        const outsideLane=this._netLanes?.get(w._routeNet)??(this.viewMode==='real'?w._realLaneX:w._schematicLaneX);
         if(Number.isFinite(outsideLane)){
             const lane=outsideLane,path=[start,a,{x:lane,y:a.y},{x:lane,y:b.y},b,end];
-            if(!path.slice(2,-1).some((p,i)=>boxes.some(box=>this.segmentIntersectsBox(path[i+1],p,box))))return path;
+            if(!path.slice(2,-1).some((p,i)=>boxes.some(box=>this.segmentIntersectsBox(path[i+1],p,box))||occupied.some(([u,v,owner])=>owner._routeNet!==w._routeNet&&this.segmentsIntersect(path[i+1],p,u,v))))return path;
         }
         const xs=[a.x,b.x], ys=[a.y,b.y];
         boxes.forEach(r=>{xs.push(r.left-18,r.right+18);ys.push(r.top-18,r.bottom+18);});
@@ -1882,7 +1939,7 @@ class CircuitSimulator {
         const si=lookup.get(X.indexOf(a.x)+','+Y.indexOf(a.y)), ei=lookup.get(X.indexOf(b.x)+','+Y.indexOf(b.y));
         if(si===undefined||ei===undefined){w._routeBlocked=true;return [start,start];} // Never fall back to a line through a body.
         const endpointKeys=[this.wireEndKey(w,'start'),this.wireEndKey(w,'end')];
-        const obstacles=occupied.filter(([, , owner])=>!owner||![this.wireEndKey(owner,'start'),this.wireEndKey(owner,'end')].some(k=>endpointKeys.includes(k)));
+        const obstacles=occupied.filter(([, , owner])=>!owner||owner._routeNet!==w._routeNet);
         const edges=nodes.map(()=>[]);
         nodes.forEach((p,k)=>{
             for(const [di,dj] of [[1,0],[0,1]]) {
@@ -1935,7 +1992,10 @@ class CircuitSimulator {
             const a=pts[i-1],b=pts[i],c=pts[i+1];
             const l1=Math.hypot(b.x-a.x,b.y-a.y),l2=Math.hypot(c.x-b.x,c.y-b.y);
             if(l1<.01||l2<.01)continue;
-            const r=Math.min(26,l1/2,l2/2);
+            // Shared bus junctions remain a single T, not two independently rounded loops.
+            const junction=this._routes&&[...this._routes.values()].some(path=>path!==pts&&path.slice(1).some((q,j)=>this.distToSeg(b.x,b.y,path[j],q)<.01));
+            if(junction){out.push(b);continue;}
+            const r=Math.min(18,l1/2,l2/2);
             const u={x:b.x+(a.x-b.x)*r/l1,y:b.y+(a.y-b.y)*r/l1};
             const v={x:b.x+(c.x-b.x)*r/l2,y:b.y+(c.y-b.y)*r/l2};out.push(u);
             for(let j=1;j<=stepsPerCurve;j++){const t=j/stepsPerCurve,k=1-t;out.push({x:k*k*u.x+2*k*t*b.x+t*t*v.x,y:k*k*u.y+2*k*t*b.y+t*t*v.y});}
@@ -1943,12 +2003,31 @@ class CircuitSimulator {
         out.push(pts.at(-1));return out;
     }
 
+    drawNetworkFlow() {
+        const paths=this.activeWires().map(w=>({w,points:this.viewMode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w)}));
+        const cacheKey=JSON.stringify([this._routeKey,paths.map(p=>[p.w._flowMag,p.w._flowDir,p.points])]);
+        if(this._flowGeometryKey===cacheKey){for(const {points,flow} of this._flowGeometry)if(Math.abs(flow)>1e-6)this.drawFlow({_flowDir:flow>=0?1:-1},points);return;}
+        const points=paths.flatMap(p=>p.points),segments=new Map(),key=p=>p.x.toFixed(3)+','+p.y.toFixed(3);
+        for(const {w,points:pts} of paths)for(let i=1;i<pts.length;i++){
+            const a=pts[i-1],b=pts[i],len=Math.hypot(b.x-a.x,b.y-a.y);if(len<.001)continue;
+            const stops=[a,b,...points.filter(p=>this.distToSeg(p.x,p.y,a,b)<.001)].sort((p,q)=>((p.x-q.x)*(b.x-a.x)+(p.y-q.y)*(b.y-a.y)));
+            for(let j=1;j<stops.length;j++){
+                const u=stops[j-1],v=stops[j];if(Math.hypot(v.x-u.x,v.y-u.y)<.001)continue;
+                const forward=key(u)<key(v),id=w._routeNet+':'+(forward?key(u)+'|'+key(v):key(v)+'|'+key(u));
+                if(!segments.has(id))segments.set(id,{points:forward?[u,v]:[v,u],flow:0});
+                segments.get(id).flow+=(w._flowMag||0)*(w._flowDir||1)*(forward?1:-1);
+            }
+        }
+        this._flowGeometryKey=cacheKey;this._flowGeometry=[...segments.values()];
+        for(const {points,flow} of segments.values())if(Math.abs(flow)>1e-6)this.drawFlow({_flowDir:flow>=0?1:-1},points);
+    }
+
     drawRealWire(w, selected) {
         const ctx=this.ctx,pts=this.sampleRealWirePath(this.resolveRealWire(w));
         ctx.save();ctx.strokeStyle=selected?'#e74c3c':'#ce984f';ctx.lineWidth=selected?5:3.5;
         ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);
         pts.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));ctx.stroke();ctx.restore();
-        if(this.simulationRunning&&Math.abs(w._flowMag||0)>1e-9)this.drawFlow(w,pts);
+        if(!this._drawingNetwork&&this.simulationRunning&&Math.abs(w._flowMag||0)>1e-9)this.drawFlow(w,pts);
         if(selected)this.drawWireControlPoints(w);
     }
 
@@ -2060,7 +2139,7 @@ class CircuitSimulator {
         }
         // 电流方向箭头（电路图模式）
         if (this.viewMode === 'schematic' && this.simulationRunning &&
-            (comp.type==='resistor'||comp.type==='bulb'||comp.type==='potentiometer'||comp.type==='voltmeter') && Math.abs(comp._current) > 1e-9)
+            (comp.type==='resistor'||comp.type==='bulb'||comp.type==='voltmeter') && Math.abs(comp._current) > 1e-9)
             this.drawCurrentArrow(comp);
         ctx.restore();
     }
@@ -2178,6 +2257,7 @@ class CircuitSimulator {
         if(terms.some(t=>t.x===48&&t.y===24&&!t.hidden)){ctx.moveTo(30,24);ctx.lineTo(48,24);}
         ctx.moveTo(48,-28);ctx.lineTo(wx,-28);ctx.lineTo(wx,5);ctx.stroke();
         ctx.fillStyle=this.schematicInk;ctx.beginPath();ctx.moveTo(wx,13);ctx.lineTo(wx-7,-1);ctx.lineTo(wx,3);ctx.lineTo(wx+7,-1);ctx.closePath();ctx.fill();
+        this.drawPotCurrent(comp,'schematic');
         this.label(comp,'滑动变阻器',0,53,{font:'12px Microsoft YaHei'});
         if(this.currentTool==='wire')terms.filter(t=>!t.hidden&&t.id!=='d').forEach(t=>this.label(comp,t.id.toUpperCase(),t.x,t.y+(t.y>0?17:-14),{font:'13px Georgia'}));
     }
@@ -2313,6 +2393,7 @@ class CircuitSimulator {
         const slider=c.createLinearGradient(0,-36,0,34);slider.addColorStop(0,'#a6a9ac');slider.addColorStop(.5,'#f0f1f2');slider.addColorStop(1,'#a0a4a7');
         c.fillStyle=slider;c.beginPath();c.moveTo(wx-7,-37);c.lineTo(wx+7,-37);c.lineTo(wx+4,30);c.quadraticCurveTo(wx,38,wx-4,30);c.closePath();c.fill();c.stroke();
         c.fillStyle='#b6cce0';c.beginPath();c.moveTo(wx-13,-55);c.quadraticCurveTo(wx,-50,wx+13,-55);c.lineTo(wx+16,-38);c.lineTo(wx-16,-38);c.closePath();c.fill();c.stroke();
+        this.drawPotCurrent(comp,'real');
         this.label(comp,'P',wx,-70,{font:'bold 17px Georgia'});
         for(const [x,y,label,ly] of [[-76,24,'A',52],[76,24,'B',52],[-112,-30,'C',-51],[112,-30,'D',-51]])this.label(comp,label,x,ly,{font:'bold 16px Georgia'});
         this.label(comp,'滑动变阻器',0,98,{font:'12px Microsoft YaHei'});
