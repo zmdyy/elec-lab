@@ -269,6 +269,8 @@
             <button class="tool-button" id="pot-principle-toggle" aria-pressed="false">变阻器原理</button>
             <button class="tool-button" id="theme-toggle" aria-pressed="false">暗色模式</button>
             <button class="tool-button" id="toggle-grid">网格</button>
+            <button class="tool-button" id="arrange-real" title="按连接顺序重新摆放实物并整理导线">整理实物线路</button>
+            <button class="tool-button" id="arrange-schematic" title="按连接关系均匀摆放并整理直角导线">整理电路图</button>
             <button class="tool-button" id="fit-view">⊡ 适应</button>
             <button class="tool-button" id="zoom-in">放大＋</button>
             <button class="tool-button" id="zoom-out">缩小－</button>
@@ -502,6 +504,9 @@ class CircuitSimulator {
         document.getElementById('rotate-btn').addEventListener('click', () => this.rotateSelected());
         document.getElementById('delete-btn').addEventListener('click', () => this.deleteSelected());
         document.getElementById('toggle-grid').addEventListener('click', () => this.toggleGrid());
+        document.getElementById('arrange-real').addEventListener('click',()=>{
+            this.saveUndo();this.viewMode='real';this.layoutRealCircuit(true);this.syncViewButton();this.updateMiniSchematicVisibility();this.recalc();this.fitView(20);
+        });
         document.getElementById('theme-toggle').addEventListener('click',()=>{
             this.darkMode=!this.darkMode;this.applyTheme();
             try { localStorage.setItem('elec-lab-theme',this.darkMode?'dark':'light'); } catch (_) {}
@@ -509,6 +514,9 @@ class CircuitSimulator {
         });
         document.getElementById('pot-principle-toggle').addEventListener('click',()=>this.togglePotPrinciple());
         document.getElementById('pot-principle-close').addEventListener('click',()=>this.togglePotPrinciple(false));
+        document.getElementById('arrange-schematic').addEventListener('click',()=>{
+            this.saveUndo();this.viewMode='schematic';this.layoutSchematicCircuit(true);this.syncViewButton();this.updateMiniSchematicVisibility();this.recalc();this.fitView(20);
+        });
         document.getElementById('view-toggle').addEventListener('click', () => this.toggleViewMode());
         document.getElementById('fit-view').addEventListener('click', () => this.fitView(document.getElementById('guide-panel').classList.contains('show') ? 310 : 20));
         document.getElementById('zoom-in').addEventListener('click', () => this.zoom(0.1));
@@ -548,7 +556,9 @@ class CircuitSimulator {
             viewMode: this.viewMode,
             panX: this.panX, panY: this.panY, scale: this.scale,
             activeExperiment: this.activeExperiment,
-            schematicReference: this.schematicReference
+            schematicReference: this.schematicReference,
+            realLayoutSignature: this._realLayoutSignature,
+            schematicLayoutSignature: this._schematicLayoutSignature
         });
     }
 
@@ -568,6 +578,7 @@ class CircuitSimulator {
         this.wires = s.wires || [];
         this.idCounter = s.idCounter || 0;
         this.viewMode = s.viewMode || 'schematic';
+        this._realLayoutSignature=s.realLayoutSignature||null;this._schematicLayoutSignature=s.schematicLayoutSignature||null;this._routeKey=null;
         this.panX = s.panX ?? 40; this.panY = s.panY ?? 30; this.scale = s.scale ?? 1;
         this.activeExperiment = s.activeExperiment ?? null;
         this.schematicReference = s.schematicReference || null;
@@ -614,15 +625,20 @@ class CircuitSimulator {
     }
 
     getAbsoluteTerminals(comp) {
-        const fixedRealMeter = this.viewMode === 'real' && (comp.type === 'ammeter' || comp.type === 'voltmeter');
-        const ang = (fixedRealMeter ? 0 : comp.rotation) * Math.PI / 180;
+        const ang = this.componentAngle(comp)*Math.PI/180;
+        const flip=(this.viewMode==='real'?comp.realFlipX:comp.schematicFlipX)?-1:1;
         const cos = Math.cos(ang), sin = Math.sin(ang);
         const base = this.componentPos(comp);
         return this.terminals(comp).map(t => ({
-            x: base.x + t.x * cos - t.y * sin,
-            y: base.y + t.x * sin + t.y * cos,
+            x: base.x + flip*t.x * cos - t.y * sin,
+            y: base.y + flip*t.x * sin + t.y * cos,
             componentId: comp.id, terminalId: t.id, component: comp, hidden: !!t.hidden
         }));
+    }
+
+    componentAngle(comp) {
+        if(this.viewMode==='real')return ['ammeter','voltmeter'].includes(comp.type)?0:(comp.realRotation??comp.rotation);
+        return comp.rotation;
     }
 
     componentPos(comp) {
@@ -682,7 +698,7 @@ class CircuitSimulator {
         const thr = 9 * this.hitScale;
         for (let i = this.wires.length - 1; i >= 0; i--) {
             if (!this.wireVisibleInCurrentView(this.wires[i])) continue;
-            const bends = this.wireControlPoints(this.wires[i]);
+            const bends = this.viewMode==='real'&&!this.wires[i].realBends?this.resolveRealWire(this.wires[i]).slice(1,-1):this.wireControlPoints(this.wires[i]);
             for (let j = bends.length - 1; j >= 0; j--) {
                 if (Math.hypot(bends[j].x - x, bends[j].y - y) < thr) return {wire:this.wires[i], index:j};
             }
@@ -747,6 +763,7 @@ class CircuitSimulator {
         return {x: e.x, y: e.y};
     }
     resolveWire(w) {
+        if(w.autoSchematic)return this.autoRealWirePath(w,this.wireEndPos(w,'start'),this.wireEndPos(w,'end'));
         const pts = [this.wireEndPos(w, 'start')];
         (w.bends || []).forEach(b => pts.push(b));
         pts.push(this.wireEndPos(w, 'end'));
@@ -755,8 +772,9 @@ class CircuitSimulator {
 
     wireControlPoints(w, create = false) {
         if (this.viewMode !== 'real') {
+            if(create&&w.autoSchematic){w.bends=this.resolveWire(w).slice(1,-1).map(p=>({...p}));w.autoSchematic=false;this._routeKey=null;}
             if (create && !w.bends) w.bends = [];
-            return w.bends || [];
+            return w.autoSchematic?this.resolveWire(w).slice(1,-1):(w.bends || []);
         }
         if (create && !w.realBends) w.realBends = this.resolveRealWire(w).slice(1, -1).map(p => ({x:p.x, y:p.y}));
         return w.realBends || [];
@@ -798,6 +816,7 @@ class CircuitSimulator {
             if (cp) {
                 this.saveUndo();
                 this.draggingControlPoint = cp;
+                this.wireControlPoints(cp.wire,true);
                 this.selectedWire = cp.wire; this.selectedComponent = null;
                 this.updatePropertiesPanel(); this.draw();
                 return;
@@ -970,12 +989,96 @@ class CircuitSimulator {
     toggleViewMode() {
         this.saveUndo();
         this.viewMode = this.viewMode === 'schematic' ? 'real' : 'schematic';
-        if(this.viewMode==='real') this.spaceRealComponents();
+        if(this.viewMode==='real') this.layoutRealCircuit();
+        else this.layoutSchematicCircuit();
         this.syncViewButton();
         this.updateMiniSchematicVisibility();
         this.recalc();
         this.fitView(document.getElementById('guide-panel').classList.contains('show')?310:20);
     }
+    layoutRealCircuit(force=false) { this.layoutCircuit(force,true); }
+    layoutSchematicCircuit(force=false) { this.layoutCircuit(force,false); }
+    layoutCircuit(force,real) {
+        // Both views share topology reduction; each keeps its own geometry and manual edits.
+        const signatureKey=real?'_realLayoutSignature':'_schematicLayoutSignature';
+        const put=(c,x,y,flip=false)=>{if(real){c.realX=x;c.realY=y;c.realRotation=0;c.realFlipX=flip;}else{c.x=x;c.y=y;c.rotation=0;c.schematicFlipX=flip;}};
+        const wires=this.activeWires().length?this.activeWires():this.wires.filter(w=>w.view!=='real');
+        const signature=JSON.stringify([this.components.map(c=>[c.id,c.type]),wires.map(w=>[w.start,w.end])]);
+        if(!force&&this[signatureKey]===signature)return;
+        this[signatureKey]=signature;
+        const parent=new Map(),find=k=>{if(!parent.has(k))parent.set(k,k);let r=k;while(parent.get(r)!==r)r=parent.get(r);return r;};
+        const union=(a,b)=>parent.set(find(a),find(b));
+        wires.forEach(w=>union(this.wireEndKey(w,'start'),this.wireEndKey(w,'end')));
+        this.components.filter(c=>c.type==='potentiometer').forEach(c=>union(c.id+'_c',c.id+'_d'));
+        const used=c=>[...new Set(wires.flatMap(w=>[w.start,w.end]).filter(e=>e.compId===c.id).map(e=>e.termId))];
+        const battery=this.components.find(c=>c.type==='battery');
+        let edges=[];
+        for(const c of this.components){
+            if(c===battery)continue;
+            const groups=new Map();used(c).forEach(t=>{const n=find(c.id+'_'+t);if(!groups.has(n))groups.set(n,t);});
+            if(groups.size!==2)continue;
+            const [[u,tu],[v,tv]]=[...groups];edges.push({kind:'leaf',u,v,comp:c,ports:{[u]:tu,[v]:tv}});
+        }
+        const source=battery?find(battery.id+'_pos'):null,target=battery?find(battery.id+'_neg'):null;
+        // Series/parallel reduction preserves the full component order, including voltmeter branches.
+        for(let pass=0;pass<this.components.length*3;pass++){
+            let changed=false;
+            outer:for(let i=0;i<edges.length;i++)for(let j=i+1;j<edges.length;j++){
+                const a=edges[i],b=edges[j];
+                if((a.u===b.u&&a.v===b.v)||(a.u===b.v&&a.v===b.u)){
+                    const grouped={kind:'parallel',u:a.u,v:a.v,children:[a,b]};edges=edges.filter((_,k)=>k!==i&&k!==j);edges.push(grouped);changed=true;break outer;
+                }
+            }
+            if(changed)continue;
+            const adjacency=new Map();for(const e of edges)for(const n of [e.u,e.v]){if(!adjacency.has(n))adjacency.set(n,[]);adjacency.get(n).push(e);}
+            for(const [n,pair] of adjacency){
+                if(n===source||n===target||pair.length!==2)continue;
+                const [a,b]=pair,u=a.u===n?a.v:a.u,v=b.u===n?b.v:b.u;if(u===v)continue;
+                edges=edges.filter(e=>e!==a&&e!==b);edges.push({kind:'series',u,v,join:n,children:[a,b]});changed=true;break;
+            }
+            if(!changed)break;
+        }
+        const root=edges.find(e=>(e.u===source&&e.v===target)||(e.u===target&&e.v===source));
+        const placed=new Set();
+        const measure=e=>{
+            if(e.kind==='leaf'){const c=e.comp;if(!real)return {w:180,h:c.type==='potentiometer'?180:140};return {w:c.type==='potentiometer'?340:['ammeter','voltmeter'].includes(c.type)?220:180,h:['ammeter','voltmeter','potentiometer'].includes(c.type)?280:180};}
+            const d=e.children.map(measure);
+            return e.kind==='series'?{w:d.reduce((sum,p)=>sum+p.w,0)+36,h:Math.max(...d.map(p=>p.h))}:{w:Math.max(...d.map(p=>p.w))+110,h:d.reduce((sum,p)=>sum+p.h,0)+70};
+        };
+        const place=(e,from,x,y)=>{
+            const d=measure(e);
+            if(e.kind==='leaf'){
+                const c=e.comp;put(c,x+d.w/2,y+d.h/2);
+                const ports=this.terminals(c),input=ports.find(t=>t.id===e.ports[from]),output=ports.find(t=>t.id===e.ports[from===e.u?e.v:e.u]);
+                // Keep instrument faces upright. Mirror only physical bodies whose leads face against the path.
+                if((!real||!['ammeter','voltmeter'].includes(c.type))&&input&&output)put(c,x+d.w/2,y+d.h/2,input.x<output.x);
+                placed.add(c.id);return;
+            }
+            if(e.kind==='parallel'){
+                let yy=y;for(const child of e.children){const cd=measure(child);place(child,from,x+(d.w-cd.w)/2,yy);yy+=cd.h+70;}return;
+            }
+            const children=from===e.u?e.children:[...e.children].reverse();let xx=x+d.w,node=from;
+            for(const child of children){const cd=measure(child);xx-=cd.w;place(child,node,xx,y+(d.h-cd.h)/2);node=child.u===node?child.v:child.u;xx-=36;}
+        };
+        if(root){
+            const d=measure(root);place(root,source,140,280);
+            put(battery,140+d.w/2,110,!real||battery.voltage<=3);placed.add(battery.id);
+            wires.forEach(w=>{const n=find(this.wireEndKey(w,'start'));w[real?'_realLaneX':'_schematicLaneX']=n===source?140+d.w+65:n===target?75:null;});
+            this._realLayoutKind='series-parallel';
+        }else{
+            // Unsupported bridge/multi-terminal circuits: spread existing geometry without changing connections.
+            const minX=Math.min(...this.components.map(c=>c.x)),minY=Math.min(...this.components.map(c=>c.y));
+            this.components.forEach(c=>{put(c,140+(c.x-minX)*1.8,140+(c.y-minY)*1.8);placed.add(c.id);});
+            wires.forEach(w=>{w[real?'_realLaneX':'_schematicLaneX']=null;});
+            this._realLayoutKind='general';
+        }
+        const remaining=this.components.filter(c=>!placed.has(c.id));
+        const bottom=Math.max(100,...this.components.filter(c=>placed.has(c.id)).map(c=>this.componentPos(c).y+200));
+        remaining.forEach((c,i)=>{put(c,160+i*300,bottom);});
+        // Old physical control points belong to the old placement and cannot safely be reused.
+        wires.forEach(w=>{if(real)w.realBends=null;else{w.bends=[];w.autoSchematic=true;}});this._routeKey=null;if(real)this.spaceRealComponents();
+    }
+
     spaceRealComponents() {
         // Preserve topology and schematic coordinates; make space only where real bodies overlap.
         for(let pass=0;pass<20;pass++) {
@@ -1115,9 +1218,9 @@ class CircuitSimulator {
 
     deleteWireControlPoint(cp) {
         if (!cp || !cp.wire) return;
-        const bends = this.wireControlPoints(cp.wire);
-        if (!bends.length) return;
         this.saveUndo();
+        const bends = this.wireControlPoints(cp.wire, true);
+        if (!bends.length) return;
         bends.splice(cp.index, 1);
         this.selectedWire = cp.wire; this.selectedComponent = null;
         this.updatePropertiesPanel(); this.draw();
@@ -1207,7 +1310,8 @@ class CircuitSimulator {
     rotateSelected() {
         if (!this.selectedComponent) return;
         this.saveUndo();
-        this.selectedComponent.rotation = (this.selectedComponent.rotation + 90) % 360;
+        const key=this.viewMode==='real'?'realRotation':'rotation';
+        this.selectedComponent[key]=((this.selectedComponent[key]??this.selectedComponent.rotation)+90)%360;
         this.recalc();
     }
 
@@ -1630,6 +1734,10 @@ class CircuitSimulator {
         this.drawPotPrinciple();
 
         ctx.restore();
+        if(this.activeWires().some(w=>w._routeBlocked)){
+            ctx.save();ctx.fillStyle=this.darkMode?'#ff9999':'#b91c1c';ctx.font='14px Microsoft YaHei';
+            ctx.fillText(this.viewMode==='real'?'元件过近，请点击“整理实物线路”。':'元件过近，请点击“整理电路图”。',16,this.canvas.height-18);ctx.restore();
+        }
     }
 
     drawGrid() {
@@ -1682,8 +1790,8 @@ class CircuitSimulator {
         const bounds = {battery:[-68,-48,68,48], bulb:[-56,-64,56,48], switch:[-60,-48,60,40],
             resistor:[-34,-14,34,16], potentiometer:[-124,-80,124,82],
             ammeter:[-64,-78,64,81], voltmeter:[-64,-78,64,81]};
-        const [l,t,r,b] = bounds[comp.type] || [-50,-50,50,50];
-        const a = ['ammeter','voltmeter'].includes(comp.type) ? 0 : comp.rotation*Math.PI/180;
+        const [l,t,r,b] = this.viewMode==='schematic'?(comp.type==='potentiometer'?[-49,-30,49,58]:[-33,-25,33,46]):(bounds[comp.type] || [-50,-50,50,50]);
+        const a=this.componentAngle(comp)*Math.PI/180;
         const pts = [[l,t],[r,t],[r,b],[l,b]].map(([x,y]) => ({x:p.x+x*Math.cos(a)-y*Math.sin(a),y:p.y+x*Math.sin(a)+y*Math.cos(a)}));
         return {left:Math.min(...pts.map(p=>p.x))-pad,right:Math.max(...pts.map(p=>p.x))+pad,
             top:Math.min(...pts.map(p=>p.y))-pad,bottom:Math.max(...pts.map(p=>p.y))+pad,comp};
@@ -1709,10 +1817,13 @@ class CircuitSimulator {
         const comp = this.components.find(c=>c.id===compId);
         if (!comp) return pos;
         let dx=0,dy=0;
-        if (['ammeter','voltmeter'].includes(comp.type)) dy=1;
+        if(this.viewMode==='schematic'){const t=this.terminals(comp).find(t=>t.id===termId);dx=t&&t.x<0?-1:1;}
+        else if (['ammeter','voltmeter'].includes(comp.type)) dy=1;
+        else if (comp.type==='potentiometer' && ['a','b'].includes(termId))dy=1;
         else if (comp.type==='battery' && comp.voltage>3) dy=-1;
         else dx = ['pos','a','c','shell'].includes(termId) ? -1 : 1;
-        const a=['ammeter','voltmeter'].includes(comp.type)?0:comp.rotation*Math.PI/180;
+        if((this.viewMode==='real'?comp.realFlipX:comp.schematicFlipX))dx=-dx;
+        const a=this.componentAngle(comp)*Math.PI/180;
         const vx=dx*Math.cos(a)-dy*Math.sin(a),vy=dx*Math.sin(a)+dy*Math.cos(a);
         const box=this.realComponentBox(comp,22);
         let d=dist;
@@ -1722,8 +1833,8 @@ class CircuitSimulator {
 
     autoRealWirePath(w, start, end) {
         // Rebuild once per geometry change, in stable wire order. Animation reuses the routes.
-        const key=JSON.stringify([this.components.map(c=>[c.id,c.type,this.componentPos(c),c.rotation,c.voltage]),
-            this.activeWires().map(w=>[w.start,w.end,w.realBends])]);
+        const key=JSON.stringify([this.viewMode,this.components.map(c=>[c.id,c.type,this.componentPos(c),c.rotation,c.realRotation,c.realFlipX,c.schematicFlipX,c.voltage]),
+            this.activeWires().map(w=>[w.start,w.end,w.realBends,w.bends,w.autoSchematic])]);
         if(this._routeKey!==key) {
             this._routeKey=key; this._routes=new Map();
             const occupied=[];
@@ -1734,7 +1845,8 @@ class CircuitSimulator {
             }
             for(const wire of this.activeWires()) {
                 const a=this.wireEndPos(wire,'start'), b=this.wireEndPos(wire,'end');
-                const path=wire.realBends?.length ? [a,...wire.realBends,b] : this.routeRealWire(wire,a,b,occupied);
+                const bends=this.viewMode==='real'?wire.realBends:(!wire.autoSchematic?wire.bends:null);
+                const path=bends?.length ? [a,...bends,b] : this.routeRealWire(wire,a,b,occupied);
                 this._routes.set(wire,path);
                 const smooth=path;
                 for(let i=1;i<smooth.length;i++) occupied.push([smooth[i-1],smooth[i],wire]);
@@ -1744,9 +1856,20 @@ class CircuitSimulator {
     }
 
     routeRealWire(w,start,end,occupied) {
+        w._routeBlocked=false;
         const a=this.terminalOutPoint(w.start.compId,w.start.termId,start);
         const b=this.terminalOutPoint(w.end.compId,w.end.termId,end);
         const boxes=this.components.map(c=>this.realComponentBox(c,20));
+        if(boxes.some(box=>(box.comp.id!==w.start.compId&&this.segmentIntersectsBox(start,a,box))||(box.comp.id!==w.end.compId&&this.segmentIntersectsBox(b,end,box)))){
+            w._routeBlocked=true;return [start,start];
+        }
+        // Supply/return nets use the outside rails of the physical layout. This prevents
+        // the return lead of an instrument from getting trapped behind its supply lead.
+        const outsideLane=this.viewMode==='real'?w._realLaneX:w._schematicLaneX;
+        if(Number.isFinite(outsideLane)){
+            const lane=outsideLane,path=[start,a,{x:lane,y:a.y},{x:lane,y:b.y},b,end];
+            if(!path.slice(2,-1).some((p,i)=>boxes.some(box=>this.segmentIntersectsBox(path[i+1],p,box))))return path;
+        }
         const xs=[a.x,b.x], ys=[a.y,b.y];
         boxes.forEach(r=>{xs.push(r.left-18,r.right+18);ys.push(r.top-18,r.bottom+18);});
         occupied.forEach(([p,q])=>{if(Math.abs(p.x-q.x)<.01) xs.push(p.x-20,p.x+20);if(Math.abs(p.y-q.y)<.01) ys.push(p.y-20,p.y+20);});
@@ -1757,7 +1880,7 @@ class CircuitSimulator {
             if(!boxes.some(r=>this.pointInBox(p,r))) {lookup.set(i+','+j,nodes.length);nodes.push(p);}
         }
         const si=lookup.get(X.indexOf(a.x)+','+Y.indexOf(a.y)), ei=lookup.get(X.indexOf(b.x)+','+Y.indexOf(b.y));
-        if(si===undefined||ei===undefined) return [start,a,b,end]; // Overlapping user-placed components.
+        if(si===undefined||ei===undefined){w._routeBlocked=true;return [start,start];} // Never fall back to a line through a body.
         const endpointKeys=[this.wireEndKey(w,'start'),this.wireEndKey(w,'end')];
         const obstacles=occupied.filter(([, , owner])=>!owner||![this.wireEndKey(owner,'start'),this.wireEndKey(owner,'end')].some(k=>endpointKeys.includes(k)));
         const edges=nodes.map(()=>[]);
@@ -1797,7 +1920,7 @@ class CircuitSimulator {
                 if(val<(dist.get(next)??Infinity)){dist.set(next,val);prev.set(next,state);push([val,next]);}
             }
         }
-        if(goal===undefined) return [start,a,b,end];
+        if(goal===undefined){w._routeBlocked=true;return [start,start];}
         const path=[];for(let k=goal;k!==undefined;k=prev.get(k))path.push(nodes[Math.floor(k/3)]);
         path.reverse();const pts=[start,...path,end],clean=[];
         for(const p of pts){if(clean.length&&Math.hypot(p.x-clean.at(-1).x,p.y-clean.at(-1).y)<.01)continue;
@@ -1830,7 +1953,7 @@ class CircuitSimulator {
     }
 
     drawWireControlPoints(w) {
-        const bends = this.wireControlPoints(w, this.viewMode === 'real');
+        const bends = this.viewMode==='real' && !w.realBends ? this.resolveRealWire(w).slice(1,-1) : this.wireControlPoints(w);
         if (!bends.length) return;
         const ctx = this.ctx;
         ctx.save();
@@ -1922,8 +2045,8 @@ class CircuitSimulator {
         ctx.save();
         const pos = this.componentPos(comp);
         ctx.translate(pos.x, pos.y);
-        if (!(this.viewMode === 'real' && (comp.type === 'ammeter' || comp.type === 'voltmeter')))
-            ctx.rotate(comp.rotation * Math.PI / 180);
+        ctx.rotate(this.componentAngle(comp)*Math.PI/180);
+        if((this.viewMode==='real'?comp.realFlipX:comp.schematicFlipX))ctx.scale(-1,1);
         ctx.lineWidth = 2; ctx.strokeStyle = this.schematicInk; ctx.fillStyle = this.schematicInk;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         const base = {
@@ -1947,7 +2070,8 @@ class CircuitSimulator {
         const ctx = this.ctx;
         ctx.save();
         ctx.translate(lx, ly);
-        if (!(this.viewMode==='real' && ['ammeter','voltmeter'].includes(comp.type))) ctx.rotate(-comp.rotation * Math.PI / 180);
+        if((this.viewMode==='real'?comp.realFlipX:comp.schematicFlipX))ctx.scale(-1,1);
+        ctx.rotate(-this.componentAngle(comp)*Math.PI/180);
         let color=opts.color||'#333';
         if(this.darkMode&&['#333','#222','#2c3e50','#7f8c8d','#16a085'].includes(color))color=color==='#16a085'?'#4adeb0':'#e2e8f0';
         ctx.fillStyle=color;
@@ -2336,7 +2460,7 @@ class CircuitSimulator {
     clearAll() {
         this.saveUndo();
         this.components = []; this.wires = [];
-        this.activeExperiment = null; this.schematicReference = null;
+        this.activeExperiment = null; this.schematicReference = null;this._realLayoutSignature=null;this._schematicLayoutSignature=null;this._routeKey=null;
         this.selectedComponent = null; this.selectedWire = null;
         this.wireDrawing = false; this.draftWire = null;
         document.getElementById('guide-panel').classList.remove('show');
@@ -2371,6 +2495,7 @@ class CircuitSimulator {
             components: JSON.parse(JSON.stringify(this.components)),
             wires: JSON.parse(JSON.stringify(this.wires.filter(w => w.view !== 'real')))
         };
+        if(this.viewMode==='real')this.layoutRealCircuit(true);
         this.recalc();
         this.updatePropertiesPanel();
         this.fitView(310); // 让出左侧引导面板
