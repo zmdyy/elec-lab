@@ -376,7 +376,7 @@ function solveLinear(A, b) {
 const COMPONENT_DEFS = {
     battery: {
         name: '电源', selRadius: 36,
-        terminals: () => [ {id:'pos', x:-32, y:0}, {id:'neg', x:32, y:0} ],
+        terminals: () => [ {id:'pos', x:32, y:0}, {id:'neg', x:-32, y:0} ],
         defaults: { voltage: 3 }
     },
     resistor: {
@@ -606,7 +606,7 @@ class CircuitSimulator {
             ];
         } else {
             if (comp.type === 'battery') return comp.voltage <= 3
-                ? [{id:'pos',x:-64,y:8},{id:'neg',x:64,y:8}]
+                ? [{id:'pos',x:64,y:8},{id:'neg',x:-64,y:8}]
                 : [{id:'neg',x:-48,y:-32},{id:'pos',x:48,y:-32}];
             if (comp.type === 'bulb') return [{id:'shell',x:-42,y:24},{id:'tip',x:42,y:24}];
             if (comp.type === 'switch') return [{id:'a',x:-42,y:16},{id:'b',x:42,y:16}];
@@ -637,7 +637,7 @@ class CircuitSimulator {
     }
 
     componentAngle(comp) {
-        if(this.viewMode==='real')return ['ammeter','voltmeter'].includes(comp.type)?0:(comp.realRotation??comp.rotation);
+        if(this.viewMode==='real')return comp.realRotation??comp.rotation;
         return comp.rotation;
     }
 
@@ -999,11 +999,11 @@ class CircuitSimulator {
     layoutRealCircuit(force=false) { this.layoutCircuit(force,true); }
     layoutSchematicCircuit(force=false) { this.layoutCircuit(force,false); }
     layoutCircuit(force,real) {
-        // Both views share topology reduction; each keeps its own geometry and manual edits.
+        // Reduce electrical topology once per view; move components without changing their orientation.
         const signatureKey=real?'_realLayoutSignature':'_schematicLayoutSignature';
         const put=(c,x,y)=>{if(real){c.realX=x;c.realY=y;c.realFlipX=false;}else{c.x=x;c.y=y;c.schematicFlipX=false;}};
         const wires=this.activeWires().length?this.activeWires():this.wires.filter(w=>w.view!=='real');
-        const signature=JSON.stringify(['fixed-orientation-v2',this.components.map(c=>[c.id,c.type]),wires.map(w=>[w.start,w.end])]);
+        const signature=JSON.stringify(['teaching-loop-right-positive-v4',this.components.map(c=>[c.id,c.type]),wires.map(w=>[w.start,w.end])]);
         if(!force&&this[signatureKey]===signature)return;
         this[signatureKey]=signature;
         const parent=new Map(),find=k=>{if(!parent.has(k))parent.set(k,k);let r=k;while(parent.get(r)!==r)r=parent.get(r);return r;};
@@ -1064,8 +1064,29 @@ class CircuitSimulator {
             for(const child of children){const cd=measure(child);if(rightToLeft)xx-=cd.w;place(child,node,xx,y+(d.h-cd.h)/2);node=child.u===node?child.v:child.u;xx+=rightToLeft?-36:cd.w+36;}
         };
         if(root){
-            const d=measure(root);place(root,source,140,280);
-            put(battery,140+d.w/2,110,!real||battery.voltage<=3);placed.add(battery.id);
+            const d=measure(root);
+            if(real){
+                // Follow the ordered series stages around a broad loop. Parallel groups stay together.
+                const stages=[],collect=(e,from)=>{if(e.kind!=='series'){stages.push({e,from});return;}let node=from;for(const child of from===e.u?e.children:[...e.children].reverse()){collect(child,node);node=child.u===node?child.v:child.u;}};
+                collect(root,source);
+                const stageWidth=Math.max(1100,(stages.length-1)*340);
+                const arrange=(e,from,x,y)=>{
+                    if(e.kind==='leaf'){put(e.comp,x+(e.comp.type==='ammeter'?80:0),y);placed.add(e.comp.id);return;}
+                    if(e.kind==='parallel'){
+                        // Keep a voltmeter below its directly measured load.
+                        const hasMeter=c=>c.kind==='leaf'&&c.comp.type==='voltmeter';
+                        const children=[...e.children].sort((a,b)=>Number(hasMeter(a))-Number(hasMeter(b)));
+                        const hasA=c=>c.kind==='leaf'?c.comp.type==='ammeter':c.children.some(hasA);
+                        const gap=children.some(hasA)?330:260;
+                        children.forEach((child,i)=>arrange(child,from,x,y+i*gap));return;
+                    }
+                    const children=from===e.u?e.children:[...e.children].reverse();let node=from;
+                    children.forEach((child,i)=>{arrange(child,node,x+((children.length-1)/2-i)*260,y);node=child.u===node?child.v:child.u;});
+                };
+                stages.forEach(({e,from},i)=>{const t=stages.length===1?.5:i/(stages.length-1);arrange(e,from,440+(1-Math.cos(Math.PI*t))*stageWidth/2,140+340*Math.sin(Math.PI*t));});
+                put(battery,440+stageWidth/2,100);placed.add(battery.id);
+            }else place(root,source,140,280);
+            if(!real){put(battery,140+d.w/2,110);placed.add(battery.id);}
             wires.forEach(w=>{const n=find(this.wireEndKey(w,'start'));w[real?'_realLaneX':'_schematicLaneX']=n===source?(rightToLeft?140+d.w+65:75):n===target?(rightToLeft?75:140+d.w+65):null;});
             this._realLayoutKind='series-parallel';
         }else{
@@ -1753,6 +1774,7 @@ class CircuitSimulator {
             this.components.forEach(c => this.drawComponent(c));
             this.drawAllTerminals();
         }
+        this.drawSchematicJunctions();
         this._drawingNetwork=false;
         if(this.simulationRunning)this.drawNetworkFlow();
         if (this.selectedComponent) this.highlight(this.selectedComponent);
@@ -1761,8 +1783,37 @@ class CircuitSimulator {
         ctx.restore();
         if(this.activeWires().some(w=>w._routeBlocked)){
             ctx.save();ctx.fillStyle=this.darkMode?'#ff9999':'#b91c1c';ctx.font='14px Microsoft YaHei';
-            ctx.fillText(this.viewMode==='real'?'元件过近，请点击“整理实物线路”。':'元件过近，请点击“整理电路图”。',16,this.canvas.height-18);ctx.restore();
+            ctx.fillText(this.viewMode==='real'?'线路存在遮挡或交叉，请点击“整理实物线路”。':'元件过近，请点击“整理电路图”。',16,this.canvas.height-18);ctx.restore();
         }
+    }
+
+    schematicJunctionPoints() {
+        const wires=this.activeWires(),parent=new Map(),find=k=>{if(!parent.has(k))parent.set(k,k);let root=k;while(parent.get(root)!==root)root=parent.get(root);return root;};
+        const endKey=(w,end)=>this.wireEndKey(w,end)||(w.id||this.wires.indexOf(w))+':'+end;
+        for(const w of wires)parent.set(find(endKey(w,'start')),find(endKey(w,'end')));
+        for(const c of this.components.filter(c=>c.type==='potentiometer'))parent.set(find(c.id+'_c'),find(c.id+'_d'));
+        const entries=wires.map(w=>({w,net:find(endKey(w,'start')),points:this.resolveWire(w)}));
+        const key=JSON.stringify(entries.map(e=>[e.net,e.points]));
+        if(this._junctionKey===key)return this._junctionPoints;
+        const points=entries.flatMap(e=>e.points),junctions=[];
+        for(const p of points){
+            if(junctions.some(q=>Math.hypot(q.x-p.x,q.y-p.y)<1)||this.components.some(c=>this.pointInBox(p,this.realComponentBox(c,0))))continue;
+            const directions=new Set(),nets=new Set();
+            for(const {net,points:path} of entries)for(let i=1;i<path.length;i++){
+                const a=path[i-1],b=path[i];if(this.distToSeg(p.x,p.y,a,b)>.001)continue;
+                nets.add(net);
+                for(const q of [a,b])if(Math.hypot(q.x-p.x,q.y-p.y)>.001)directions.add(Math.sign(q.x-p.x)+','+Math.sign(q.y-p.y));
+            }
+            if(directions.size>=3&&nets.size===1)junctions.push(p);
+        }
+        this._junctionKey=key;this._junctionPoints=junctions;return junctions;
+    }
+
+    drawSchematicJunctions() {
+        if(this.viewMode!=='schematic')return;
+        const ctx=this.ctx;ctx.save();ctx.fillStyle=this.schematicInk;
+        for(const p of this.schematicJunctionPoints()){ctx.beginPath();ctx.arc(p.x,p.y,3.2,0,Math.PI*2);ctx.fill();}
+        ctx.restore();
     }
 
     drawGrid() {
@@ -1814,7 +1865,7 @@ class CircuitSimulator {
         const p = this.componentPos(comp);
         const bounds = {battery:[-68,-48,68,48], bulb:[-56,-64,56,48], switch:[-60,-48,60,40],
             resistor:[-34,-14,34,16], potentiometer:[-124,-80,124,82],
-            ammeter:[-64,-78,64,81], voltmeter:[-64,-78,64,81]};
+            ammeter:[-64,-108,64,81], voltmeter:[-64,-108,64,81]};
         const [l,t,r,b] = this.viewMode==='schematic'?(comp.type==='potentiometer'?[-49,-30,49,58]:[-33,-25,33,46]):(bounds[comp.type] || [-50,-50,50,50]);
         const a=this.componentAngle(comp)*Math.PI/180;
         const pts = [[l,t],[r,t],[r,b],[l,b]].map(([x,y]) => ({x:p.x+x*Math.cos(a)-y*Math.sin(a),y:p.y+x*Math.sin(a)+y*Math.cos(a)}));
@@ -1845,7 +1896,7 @@ class CircuitSimulator {
         if(this.viewMode==='schematic'){const t=this.terminals(comp).find(t=>t.id===termId);dx=t&&t.x<0?-1:1;}
         else if (['ammeter','voltmeter'].includes(comp.type)) dy=1;
         else if (comp.type==='potentiometer' && ['a','b'].includes(termId))dy=1;
-        else if (comp.type==='battery' && comp.voltage>3) dy=-1;
+        else if (comp.type==='battery') {if(comp.voltage>3)dy=-1;else dx=termId==='pos'?1:-1;}
         else dx = ['pos','a','c','shell'].includes(termId) ? -1 : 1;
         if((this.viewMode==='real'?comp.realFlipX:comp.schematicFlipX))dx=-dx;
         const a=this.componentAngle(comp)*Math.PI/180;
@@ -1854,6 +1905,169 @@ class CircuitSimulator {
         let d=dist;
         while(this.pointInBox({x:pos.x+vx*d,y:pos.y+vy*d},box)) d+=4;
         return {x:pos.x+vx*d,y:pos.y+vy*d};
+    }
+
+    trimWireSegment(a,b,shared,radius=24) {
+        let start=a,end=b;
+        for(const p of shared){
+            const inside=q=>(q.x-p.x)**2+(q.y-p.y)**2<radius*radius;
+            const sa=inside(start),sb=inside(end);if(sa&&sb)return null;
+            if(sa||sb){
+                const u=sa?start:end,v=sa?end:start,dx=v.x-u.x,dy=v.y-u.y,ux=u.x-p.x,uy=u.y-p.y;
+                const A=dx*dx+dy*dy,B=2*(ux*dx+uy*dy),C=ux*ux+uy*uy-radius*radius;
+                const t=(-B+Math.sqrt(Math.max(0,B*B-4*A*C)))/(2*A),q={x:u.x+dx*t,y:u.y+dy*t};
+                if(sa)start=q;else end=q;
+            }
+        }
+        return [start,end];
+    }
+
+    wireRoutesReport(routes, only=null) {
+        const body=[],conflicts=[],self=[],entries=[...routes],segments=new Map();
+        const distance=(a,b,c,d)=>this.segmentsIntersect(a,b,c,d)?0:Math.min(this.distToSeg(a.x,a.y,c,d),this.distToSeg(b.x,b.y,c,d),this.distToSeg(c.x,c.y,a,b),this.distToSeg(d.x,d.y,a,b));
+        for(const [w,path] of entries){
+            const parts=path.slice(1).flatMap((q,i)=>Math.hypot(q.x-path[i].x,q.y-path[i].y)>.001?[[path[i],q]]:[]);segments.set(w,parts);
+            if(only&&w!==only)continue;
+            if(!path.every(p=>Number.isFinite(p.x)&&Number.isFinite(p.y))){body.push(w);continue;}
+            for(const c of this.components){
+                const attached=[w.start.compId,w.end.compId].includes(c.id);
+                if(!attached){const box=this.realComponentBox(c,2);if(parts.some(([a,b])=>this.segmentIntersectsBox(a,b,box)))body.push(w);}
+                else if(['ammeter','voltmeter'].includes(c.type)&&this.viewMode==='real'){
+                    const p=this.componentPos(c),angle=-this.componentAngle(c)*Math.PI/180,convert=q=>({x:(q.x-p.x)*Math.cos(angle)-(q.y-p.y)*Math.sin(angle),y:(q.x-p.x)*Math.sin(angle)+(q.y-p.y)*Math.cos(angle)});
+                    if(parts.some(([a,b])=>this.segmentIntersectsBox(convert(a),convert(b),{left:-64,right:64,top:-108,bottom:20})))body.push(w);
+                }
+            }
+            for(let i=0;i<parts.length;i++)for(let j=i+2;j<parts.length;j++)if(this.segmentsIntersect(...parts[i],...parts[j]))self.push(w);
+        }
+        for(let i=0;i<entries.length;i++)for(let j=0;j<i;j++){
+            const [w]=entries[i],[v]=entries[j];if(only&&w!==only&&v!==only)continue;
+            const shared=['start','end'].flatMap(e=>['start','end'].filter(f=>this.wireEndKey(w,e)&&this.wireEndKey(w,e)===this.wireEndKey(v,f)).map(()=>this.wireEndPos(w,e)));
+            let hit=false;
+            for(const [a,b] of segments.get(w)){
+                for(const [c,d] of segments.get(v)){
+                    if(Math.min(a.x,b.x)>Math.max(c.x,d.x)+5||Math.max(a.x,b.x)<Math.min(c.x,d.x)-5||Math.min(a.y,b.y)>Math.max(c.y,d.y)+5||Math.max(a.y,b.y)<Math.min(c.y,d.y)-5)continue;
+                    const u=this.trimWireSegment(a,b,shared),q=this.trimWireSegment(c,d,shared);if(!u||!q)continue;
+                    if(distance(...u,...q)<5){hit=true;break;}
+                }
+                if(hit)break;
+            }
+            if(hit)conflicts.push([w,v]);
+        }
+        return {body,conflicts,self,clear:!body.length&&!conflicts.length&&!self.length};
+    }
+
+    smoothIndependentRoutes(routes) {
+        const smooth=(points,radius)=>{
+            if(!radius)return points.map(p=>({...p}));
+            const out=[points[0]];
+            for(let i=1;i<points.length-1;i++){
+                const a=points[i-1],b=points[i],c=points[i+1],l1=Math.hypot(a.x-b.x,a.y-b.y),l2=Math.hypot(c.x-b.x,c.y-b.y);
+                if(Math.min(l1,l2)<.001)continue;
+                const r=Math.min(radius,l1*.45,l2*.45),u={x:b.x+(a.x-b.x)*r/l1,y:b.y+(a.y-b.y)*r/l1},v={x:b.x+(c.x-b.x)*r/l2,y:b.y+(c.y-b.y)*r/l2};out.push(u);
+                for(let j=1;j<=16;j++){const t=j/16;out.push({x:(1-t)**2*u.x+2*(1-t)*t*b.x+t*t*v.x,y:(1-t)**2*u.y+2*(1-t)*t*b.y+t*t*v.y});}
+            }
+            out.push(points.at(-1));return out;
+        };
+        const curved=new Map(routes);
+        for(const [w,path] of routes){
+            if(w.realBends?.length)continue;
+            for(const radius of [75,50,32,18,8,0]){
+                const candidate=smooth(path,radius);curved.set(w,candidate);
+                if(this.wireRoutesReport(curved,w).clear){candidate._sampled=true;break;}
+            }
+        }
+        return curved;
+    }
+
+    // Physical leads are separate wires, even on the same electrical node.
+    // Shared binding posts only allow convergence within 24 px; other wires are hard obstacles.
+    independentWireRoutes(wires, fanMask=0) {
+        const boxes=this.components.map(c=>this.realComponentBox(c,16));
+        const leads=new Map(),routes=new Map();
+        const keys=[...new Set(wires.flatMap(w=>['start','end'].map(e=>this.wireEndKey(w,e))))].filter(key=>key&&wires.filter(w=>['start','end'].some(e=>this.wireEndKey(w,e)===key)).length>1).sort();
+        for(const w of wires){const lead={};for(const end of ['start','end']){
+            const e=w[end],p=this.wireEndPos(w,end),out=this.terminalOutPoint(e.compId,e.termId,p);
+            const length=Math.hypot(out.x-p.x,out.y-p.y)||1,dx=(out.x-p.x)/length,dy=(out.y-p.y)/length,key=this.wireEndKey(w,end);
+            const attached=wires.filter(v=>['start','end'].some(k=>this.wireEndKey(v,k)===key));
+            attached.sort((a,b)=>{const far=v=>this.wireEndPos(v,this.wireEndKey(v,'start')===key?'end':'start'),u=far(a),v=far(b);return ((u.x-p.x)*(-dy)+(u.y-p.y)*dx)/Math.hypot(u.x-p.x,u.y-p.y)-((v.x-p.x)*(-dy)+(v.y-p.y)*dx)/Math.hypot(v.x-p.x,v.y-p.y);});
+            const endpointComp=this.components.find(c=>c.id===e.compId);
+            if(endpointComp?.type==='battery'&&e.termId==='neg'&&attached.length>1)attached.reverse();
+            if(keys.includes(key)&&(fanMask&(1<<keys.indexOf(key))))attached.reverse();
+            const offset=(attached.indexOf(w)-(attached.length-1)/2)*32;
+            const distance=Math.max(length,64);
+            const q={x:p.x+dx*distance-dy*offset,y:p.y+dy*distance+dx*offset};
+            const comp=this.components.find(c=>c.id===e.compId),cp=comp?this.componentPos(comp):p;
+            let points=[p,q];
+            if(comp?.type==='battery'&&attached.length===1&&comp.voltage<=3&&e.termId==='neg'&&this.componentAngle(comp)===0){
+                const top=Math.min(...boxes.map(b=>b.top))-120;points=[p,q,{x:q.x,y:top}];
+                if(points.slice(1).some((b,i)=>boxes.some(box=>box.comp!==comp&&this.segmentIntersectsBox(points[i],b,box))))points=[p,q];
+            }
+            if(comp?.type==='ammeter'&&attached.length===1&&this.componentAngle(comp)===0){
+                points=e.termId==='neg'?[p,q,{x:cp.x-115,y:q.y},{x:cp.x-115,y:cp.y-150}]:[p,{x:q.x,y:cp.y+220}];
+                if(points.slice(1).some((b,i)=>boxes.some(box=>box.comp!==comp&&this.segmentIntersectsBox(points[i],b,box))))points=[p,q];
+            }
+            lead[end]={p,q:points.at(-1),points};
+        }leads.set(w,lead);}
+        const segmentDistance=(a,b,c,d)=>this.segmentsIntersect(a,b,c,d)?0:Math.min(this.distToSeg(a.x,a.y,c,d),this.distToSeg(b.x,b.y,c,d),this.distToSeg(c.x,c.y,a,b),this.distToSeg(d.x,d.y,a,b));
+        const clip=(a,b,shared)=>this.trimWireSegment(a,b,shared,26);
+        const route=(w,occupied)=>{
+            const own=leads.get(w),a=own.start.q,b=own.end.q;
+            const obstacles=[];
+            for(const v of wires){if(v===w)continue;const shared=['start','end'].flatMap(e=>['start','end'].filter(f=>this.wireEndKey(w,e)&&this.wireEndKey(w,e)===this.wireEndKey(v,f)).map(()=>this.wireEndPos(w,e)));
+                const append=(p,q)=>{const segment=clip(p,q,shared);if(segment)obstacles.push(segment);};
+                for(const e of ['start','end']){const l=leads.get(v)[e];for(let i=1;i<l.points.length;i++)append(l.points[i-1],l.points[i]);}
+                const path=occupied.get(v);if(path)for(let i=1;i<path.length;i++)append(path[i-1],path[i]);
+            }
+            const vertices=[a,b];
+            const add=p=>{if(!boxes.some(box=>this.pointInBox(p,box))&&!vertices.some(q=>Math.hypot(p.x-q.x,p.y-q.y)<1))vertices.push(p);};
+            for(const box of boxes)for(const x of [box.left-12,box.right+12])for(const y of [box.top-12,box.bottom+12])add({x,y});
+            for(const [p,q] of obstacles)for(const point of [p,q])for(const dx of [-16,0,16])for(const dy of [-16,0,16])if(dx||dy)add({x:point.x+dx,y:point.y+dy});
+            const minX=Math.min(...boxes.map(b=>b.left))-180,maxX=Math.max(...boxes.map(b=>b.right))+180,minY=Math.min(...boxes.map(b=>b.top))-180,maxY=Math.max(...boxes.map(b=>b.bottom))+180;
+            for(const x of [minX,(minX+maxX)/2,maxX])for(const y of [minY,(minY+maxY)/2,maxY])add({x,y});
+            const distance=new Float64Array(vertices.length);distance.fill(Infinity);distance[0]=0;const prev=new Int32Array(vertices.length);prev.fill(-1);const closed=new Uint8Array(vertices.length);
+            let goal=false;
+            for(let step=0;step<vertices.length;step++){
+                let id=-1,best=Infinity;for(let i=0;i<vertices.length;i++){const value=distance[i]+Math.hypot(vertices[i].x-b.x,vertices[i].y-b.y);if(!closed[i]&&value<best){best=value;id=i;}}
+                if(id<0)break;if(id===1){goal=true;break;}closed[id]=1;const p=vertices[id];
+                for(let j=1;j<vertices.length;j++){if(closed[j])continue;const q=vertices[j],length=Math.hypot(q.x-p.x,q.y-p.y);if(distance[id]+length>=distance[j])continue;
+                    if(boxes.some(box=>this.segmentIntersectsBox(p,q,box)))continue;
+                    if(obstacles.some(([u,v])=>segmentDistance(p,q,u,v)<10))continue;
+                    const value=distance[id]+length+12;if(value<distance[j]){distance[j]=value;prev[j]=id;}
+                }
+            }
+            if(!goal)return null;
+            const path=[];for(let i=1;i>=0;i=prev[i])path.push(vertices[i]);path.reverse();return [...own.start.points.slice(0,-1),...path,...own.end.points.slice(0,-1).reverse()];
+        };
+        const seeds=new Map(wires.filter(w=>w.realBends?.length).map(w=>[w,[this.wireEndPos(w,'start'),...w.realBends,this.wireEndPos(w,'end')]]));
+        for(const meter of this.components.filter(c=>c.type==='voltmeter')){
+            const meterWires=wires.filter(w=>['start','end'].some(e=>w[e].compId===meter.id));
+            if(meterWires.length!==2)continue;
+            const far=meterWires.map(w=>w[w.start.compId===meter.id?'end':'start']);
+            if(far[0].compId!==far[1].compId)continue;
+            const load=this.components.find(c=>c.id===far[0].compId);if(!load||!['resistor','bulb'].includes(load.type))continue;
+            const mp=this.componentPos(meter),rp=this.componentPos(load);
+            if(mp.y-rp.y<170||Math.abs(mp.x-rp.x)>40||this.componentAngle(load)!==0||this.componentAngle(meter)!==0)continue;
+            const left=far.map(e=>this.terminalPos(e.compId,e.termId)).sort((a,b)=>a.x-b.x)[0];
+            for(const w of meterWires){
+                if(seeds.has(w))continue;
+                const loadEnd=w.start.compId===load.id?'start':'end',meterEnd=loadEnd==='start'?'end':'start',l=leads.get(w)[loadEnd],v=leads.get(w)[meterEnd];
+                const outer=l.p.x===left.x;
+                const x=mp.x-(outer?190:110),y=mp.y+(outer?190:150);
+                let path=outer?[l.p,l.q,{x,y:rp.y+70},{x,y},{x:v.q.x,y},v.q,v.p]:[l.p,l.q,{x:l.q.x+30,y:rp.y+75},{x,y:rp.y+125},{x,y},v.q,v.p];
+                if(loadEnd==='end')path.reverse();seeds.set(w,path);
+            }
+        }
+        let state=8123;const random=()=>{state=(Math.imul(state,1664525)+1013904223)>>>0;return state/4294967296;};
+        const order=[...wires].sort((a,b)=>Math.hypot(leads.get(a).start.q.x-leads.get(a).end.q.x,leads.get(a).start.q.y-leads.get(a).end.q.y)-Math.hypot(leads.get(b).start.q.x-leads.get(b).end.q.x,leads.get(b).start.q.y-leads.get(b).end.q.y));
+        for(let attempt=0;attempt<16;attempt++){
+            routes.clear();for(const [w,path] of seeds)routes.set(w,path);let failed=null;
+            for(const w of order){if(seeds.has(w))continue;const path=route(w,routes);if(!path){failed=w;break;}routes.set(w,path);}
+            if(!failed&&this.wireRoutesReport(routes).clear)return new Map(routes);
+            if(!failed)break;
+            const i=order.indexOf(failed);order.splice(i,1);order.unshift(failed);
+            if(attempt%3===2)for(let i=order.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[order[i],order[j]]=[order[j],order[i]];}
+        }
+        return null;
     }
 
     autoRealWirePath(w, start, end) {
@@ -1867,6 +2081,13 @@ class CircuitSimulator {
             this.activeWires().forEach(w=>roots.set(find(this.wireEndKey(w,'start')),find(this.wireEndKey(w,'end'))));
             this.components.filter(c=>c.type==='potentiometer').forEach(c=>roots.set(find(c.id+'_c'),find(c.id+'_d')));
             this.activeWires().forEach(w=>{w._routeNet=find(this.wireEndKey(w,'start'));});
+            if(this.viewMode==='real'&&this.activeWires().length<=24){
+                for(const fanMask of [0,1,2,3]){
+                    const independent=this.independentWireRoutes(this.activeWires(),fanMask);
+                    if(independent){this._routes=this.smoothIndependentRoutes(independent);this._routingMode='independent';this.activeWires().forEach(w=>w._routeBlocked=false);return this._routes.get(w)||[start,end];}
+                }
+            }
+            this._routingMode='orthogonal';
             this._netLanes=new Map();
             for(const net of new Set(this.activeWires().map(w=>w._routeNet))){
                 const ends=new Map();this.activeWires().filter(w=>w._routeNet===net).forEach(w=>['start','end'].forEach(end=>ends.set(this.wireEndKey(w,end),w[end])));
@@ -1907,6 +2128,10 @@ class CircuitSimulator {
                 order=attempt%2?[...order.filter(w=>w!==trouble),trouble]:[trouble,...order.filter(w=>w!==trouble)];
             }
             this._routes=best;
+            if(this.viewMode==='real'){
+                const report=this.wireRoutesReport(new Map([...best].map(([w,path])=>[w,this.sampleRealWirePath(path)])));
+                for(const w of [...report.body,...report.self,...report.conflicts.flat()])w._routeBlocked=true;
+            }
 
         }
         return this._routes.get(w) || [start,end];
@@ -1986,7 +2211,7 @@ class CircuitSimulator {
     }
 
     sampleRealWirePath(pts, stepsPerCurve = 12) {
-        if(pts.length<3)return pts;
+        if(pts._sampled||pts.length<3)return pts;
         const out=[pts[0]];
         for(let i=1;i<pts.length-1;i++) {
             const a=pts[i-1],b=pts[i],c=pts[i+1];
@@ -2184,11 +2409,11 @@ class CircuitSimulator {
         const ctx = this.ctx;
         ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-10,0); ctx.moveTo(10,0); ctx.lineTo(32,0); ctx.stroke();
         ctx.lineWidth = 2.4;
-        ctx.beginPath(); ctx.moveTo(-10,-18); ctx.lineTo(-10,18); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(10,-11); ctx.lineTo(10,11); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(10,-18); ctx.lineTo(10,18); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-10,-11); ctx.lineTo(-10,11); ctx.stroke();
         ctx.lineWidth = 2;
-        this.label(comp, '+', -18, -20, {color:'#e74c3c', font:'bold 15px Arial'});
-        this.label(comp, '−', 18, -20, {color:'#2980b9', font:'bold 15px Arial'});
+        this.label(comp, '+', 18, -20, {color:'#e74c3c', font:'bold 15px Arial'});
+        this.label(comp, '−', -18, -20, {color:'#2980b9', font:'bold 15px Arial'});
         this.label(comp, comp.voltage + 'V', 0, 28, {color:'#2c3e50', font:'bold 13px "Microsoft YaHei"'});
     }
 
@@ -2312,12 +2537,12 @@ class CircuitSimulator {
             const count=comp.voltage<=1.5?1:2,width=108/count;
             for(let i=0;i<count;i++){
                 const x=-54+i*width,g=c.createLinearGradient(0,-30,0,24);g.addColorStop(0,'#ffe4a0');g.addColorStop(.35,'#fffbd7');g.addColorStop(1,'#b39122');
-                c.fillStyle=g;c.beginPath();c.roundRect(x,-30,width-3,53,[10,4,18,18]);c.fill();c.stroke();
-                c.fillStyle='#d7dce0';c.fillRect(x-3,-12,4,20);c.strokeRect(x-3,-12,4,20);
-                this.label(comp,'⊕',x+16,-3,{font:'bold 24px Arial',color:'#d92121'});
+                c.fillStyle=g;c.beginPath();c.roundRect(x,-30,width-3,53,[4,10,18,18]);c.fill();c.stroke();
+                c.fillStyle='#d7dce0';c.fillRect(x+width-4,-12,4,20);c.strokeRect(x+width-4,-12,4,20);
+                this.label(comp,'⊕',x+width-19,-3,{font:'bold 24px Arial',color:'#d92121'});
             }
-            this.bindingPost(-64,8,true);this.bindingPost(64,8,false);
-            this.label(comp,'−',64,-10,{font:'bold 16px Arial',color:'#2873a2'});
+            this.bindingPost(-64,8,false);this.bindingPost(64,8,true);
+            this.label(comp,'−',-64,-10,{font:'bold 16px Arial',color:'#2873a2'});
         }else{
             c.fillStyle='#879bb5';c.beginPath();c.roundRect(-62,-20,124,62,5);c.fill();c.stroke();
             c.fillStyle='#c4d5e4';c.fillRect(-62,-26,124,15);c.strokeRect(-62,-26,124,15);
@@ -2754,7 +2979,7 @@ const EXPERIMENTS = [
  *  库侧栏 SVG 图标注入
  * ============================================================ */
 const ICONS = {
-    BAT: '<svg viewBox="0 0 48 24"><line x1="4" y1="12" x2="18" y2="12"/><line x1="18" y1="3" x2="18" y2="21"/><line x1="30" y1="7" x2="30" y2="17"/><line x1="30" y1="12" x2="44" y2="12"/></svg>',
+    BAT: '<svg viewBox="0 0 48 24"><line x1="4" y1="12" x2="18" y2="12"/><line x1="18" y1="7" x2="18" y2="17"/><line x1="30" y1="3" x2="30" y2="21"/><line x1="30" y1="12" x2="44" y2="12"/></svg>',
     RES: '<svg viewBox="0 0 48 24"><line x1="2" y1="12" x2="11" y2="12"/><rect x="11" y="6" width="26" height="12"/><line x1="37" y1="12" x2="46" y2="12"/></svg>',
     BULB:'<svg viewBox="0 0 48 24"><line x1="2" y1="12" x2="12" y2="12"/><circle cx="24" cy="12" r="9"/><line x1="18" y1="6" x2="30" y2="18"/><line x1="30" y1="6" x2="18" y2="18"/><line x1="36" y1="12" x2="46" y2="12"/></svg>',
     SW:  '<svg viewBox="0 0 48 24"><line x1="2" y1="16" x2="14" y2="16"/><circle cx="14" cy="16" r="2.5"/><line x1="14" y1="16" x2="32" y2="6"/><circle cx="34" cy="16" r="2.5"/><line x1="34" y1="16" x2="46" y2="16"/></svg>',

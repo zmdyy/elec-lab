@@ -26,7 +26,7 @@ for(let index=0;index<4;index++){
  console.log(`PASS experiment ${index+1}: topology, readings, curve clearance, endpoints, route cache`);
 }
 const s=build(0);s.viewMode='real';const battery=s.components.find(c=>c.type==='battery');
-for(const voltage of [1.5,3,6,12]){battery.voltage=voltage;const t=s.terminals(battery),pos=t.find(t=>t.id==='pos'),neg=t.find(t=>t.id==='neg');assert.ok(voltage<=3?pos.x<neg.x:pos.x>neg.x);}
+for(const voltage of [1.5,3,6,12]){battery.voltage=voltage;const t=s.terminals(battery),pos=t.find(t=>t.id==='pos'),neg=t.find(t=>t.id==='neg');assert.ok(pos.x>neg.x);}
 const am=s.components.find(c=>c.type==='ammeter');assert.equal(s.terminals(am).find(t=>t.id==='neg').x,-37.2);
 console.log('PASS battery polarity for 1.5/3/6/12 V and reused meter terminal geometry');
 
@@ -68,11 +68,14 @@ function assertSafeRoutes(m){
  const roots=new Map(),find=k=>{if(!roots.has(k))roots.set(k,k);while(roots.get(k)!==k)k=roots.get(k);return k;};
  for(const w of m.wires)roots.set(find(m.wireEndKey(w,'start')),find(m.wireEndKey(w,'end')));
  const paths=m.wires.map(w=>m.sampleRealWirePath(m.resolveRealWire(w)));
+ if(m.viewMode==='real'){const report=m.wireRoutesReport(new Map(m.wires.map((w,i)=>[w,paths[i]])));assert.ok(report.clear,`strict physical audit: ${report.body.length} obstructions, ${report.conflicts.length} wire conflicts, ${report.self.length} self crossings`);}
  m.wires.forEach((w,i)=>{
   assert.ok(!w._routeBlocked,'fixture must have a complete route');
   for(const c of m.components){
    const own=c.id===w.start.compId||c.id===w.end.compId,p=m.componentPos(c);
    const box=own&&['ammeter','voltmeter'].includes(c.type)?(m.viewMode==='real'?{left:p.x-64,right:p.x+64,top:p.y-78,bottom:p.y+20}:{left:p.x-18,right:p.x+18,top:p.y-18,bottom:p.y+18}):own?null:m.realComponentBox(c,0);
+   const local=q=>{const a=-m.componentAngle(c)*Math.PI/180;return {x:(q.x-p.x)*Math.cos(a)-(q.y-p.y)*Math.sin(a),y:(q.x-p.x)*Math.sin(a)+(q.y-p.y)*Math.cos(a)};};
+   if(own&&m.viewMode==='real'&&['ammeter','voltmeter'].includes(c.type)){assert.ok(!paths[i].slice(1).some((q,j)=>m.segmentIntersectsBox(local(paths[i][j]),local(q),{left:-64,right:64,top:-108,bottom:20})));continue;}
    if(box)assert.ok(!paths[i].slice(1).some((q,j)=>m.segmentIntersectsBox(paths[i][j],q,box)),`wire ${i} covers ${own?'its own meter face':'another component'} ${c.id}`);
   }
   for(let k=0;k<i;k++){
@@ -132,7 +135,7 @@ for(const lower of ['a','b'])for(const upper of ['c','d'])for(const reversed of 
 }
 const oriented=buildUserMixed();oriented.components.forEach((c,i)=>{c.rotation=i%2?90:0;c.realRotation=c.rotation;});
 const rotations=JSON.stringify(oriented.components.map(c=>[c.rotation,c.realRotation]));
-for(const view of ['real','schematic']){oriented.viewMode=view;oriented.layoutCircuit(true,view==='real');assert.equal(JSON.stringify(oriented.components.map(c=>[c.rotation,c.realRotation])),rotations);assert.ok(oriented.components.every(c=>!c.realFlipX&&!c.schematicFlipX));}
+for(const view of ['real','schematic']){oriented.viewMode=view;oriented.layoutCircuit(true,view==='real');assert.equal(JSON.stringify(oriented.components.map(c=>[c.rotation,c.realRotation])),rotations);assert.ok(oriented.components.every(c=>!c.realFlipX&&!c.schematicFlipX));oriented.components.forEach(c=>assert.equal(oriented.componentAngle(c),view==='real'?c.realRotation:c.rotation));}
 console.log('PASS rheostat live paths in three views, four contact combinations, both polarities, stopped flow, and preserved rotations');
 function buildFeedback(){
  const m=build(0);m.components=[];m.wires=[];
@@ -151,3 +154,43 @@ const pot=balanced.components.find(c=>c.type==='potentiometer');
 assert.ok(Math.abs(balanced.connectedWireTerminalFlow(pot,'c')+pot._potI1+pot._potI2)<1e-6,'rod and resistor currents must balance');
 balanced.components.find(c=>c.type==='switch').state='open';balanced.solveCircuit();assert.ok(balanced.wires.every(w=>w._flowMag===0));
 console.log('PASS complete branch current balance, switch continuity and open-circuit animation');
+
+function buildLatestMeasurement(){
+ const m=build(0);m.components=[];m.wires=[];
+ const b=m.createComponent('battery',{voltage:3,x:760,y:110}),p=m.createComponent('potentiometer',{x:190,y:500}),r=m.createComponent('resistor',{resistance:10,x:480,y:365}),v=m.createComponent('voltmeter',{x:480,y:590}),a=m.createComponent('ammeter',{x:770,y:477}),l1=m.createComponent('bulb',{x:1060,y:365}),l2=m.createComponent('bulb',{x:1060,y:590}),s=m.createComponent('switch',{state:'open',x:1350,y:477});
+ const w=(a,ta,b,tb)=>m.connectTerminals(a,ta,b,tb,[],'both');
+ w(b,'pos',p,'a');w(p,'c',r,'a');w(r,'a',v,'r3');w(r,'b',v,'neg');w(r,'b',a,'r0_6');w(a,'neg',l1,'shell');w(l1,'shell',l2,'shell');w(l1,'tip',l2,'tip');w(l2,'tip',s,'b');w(s,'a',b,'neg');return m;
+}
+
+for(const reverse of [false,true]){
+ const m=buildLatestMeasurement();if(reverse)m.wires.reverse();
+ m.components.find(c=>c.type==='switch').state='closed';m.solveCircuit();
+ const connections=JSON.stringify(m.wires.map(w=>[w.start,w.end])),before=m.components.map(c=>c.measurement||0),rotations=m.components.map(c=>c.rotation);
+ for(const mode of ['real','schematic','real']){
+  m.viewMode=mode;m.layoutCircuit(true,mode==='real');m.solveCircuit();
+  assert.equal(JSON.stringify(m.wires.map(w=>[w.start,w.end])),connections);
+  m.components.forEach((c,i)=>{assert.equal(c.rotation,rotations[i]);assert.equal(m.componentAngle(c),rotations[i]);assert.ok(Math.abs((c.measurement||0)-before[i])<1e-6);});
+  if(mode==='real'){
+   assertSafeRoutes(m);assert.equal(m._routingMode,'independent');
+   const load=m.components.find(c=>c.type==='resistor'),meter=m.components.find(c=>c.type==='voltmeter');
+   assert.equal(load.realX,meter.realX);assert.ok(meter.realY>load.realY);
+  }else{
+   assert.ok(m.schematicJunctionPoints().length>=4,'parallel branches need visible junction dots');
+   for(const w of m.wires){const path=m.resolveWire(w);path.slice(1).forEach((q,i)=>assert.ok(Math.abs(q.x-path[i].x)<1e-6||Math.abs(q.y-path[i].y)<1e-6));}
+  }
+ }
+ console.log('PASS latest resistor/voltmeter and parallel lamps, '+(reverse?'reversed':'original')+' wire order: independent curves, measured pairing, junction dots, repeat conversion and unchanged connections/readings/angles');
+}
+// A common electrical net must not exempt long overlapping physical leads.
+const overlap=buildLatestMeasurement();overlap.viewMode='real';overlap.layoutRealCircuit(true);
+const x=overlap.wires[1],y=overlap.wires[2],post=overlap.wireEndPos(x,'end');
+const sharedLine=[post,{x:post.x-100,y:post.y},{x:post.x-160,y:post.y+100}];
+assert.equal(overlap.wireRoutesReport(new Map([[x,sharedLine],[y,sharedLine]])).conflicts.length,1);
+console.log('PASS strict detection of overlapping wires on a shared terminal');
+
+const disconnected=build(0);disconnected.components=[];disconnected.viewMode='schematic';disconnected.wires=[
+ {id:'X',start:{x:0,y:50},end:{x:100,y:50},bends:[]},
+ {id:'Y',start:{x:50,y:0},end:{x:50,y:100},bends:[{x:50,y:50}]}
+];
+assert.equal(disconnected.schematicJunctionPoints().length,0,'crossing disconnected wires must not acquire a junction dot');
+console.log('PASS schematic junctions only mark electrically connected branches');
