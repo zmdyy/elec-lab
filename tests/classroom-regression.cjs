@@ -52,3 +52,20 @@ console.log('PASS variable-controlled record grouping, all-meter snapshots, pred
 const auto=build(1);auto._classroomReady=true;auto.flushAutosave();assert.ok(cache.has('elec-lab-experiment-v1'));const stored=cache.get('elec-lab-experiment-v1');auto._recoveryPending=true;auto.components=[];auto.flushAutosave();assert.equal(cache.get('elec-lab-experiment-v1'),stored);
 sandbox.localStorage.setItem=()=>{throw new Error('quota');};auto._recoveryPending=false;auto.flushAutosave();assert.match(dummy.textContent,/自动保存失败/);
 console.log('PASS autosave storage, pending-recovery protection and unavailable/quota-exceeded storage');
+
+const selection=build(0);
+assert.equal(selection.faultTargets('open').length,2);
+assert.equal(selection.faultTargets('reverse').length,3);
+assert.equal(selection.faultTargets('wire-open').length,selection.wires.length);
+selection.wires.forEach(w=>w.view='schematic');selection.viewMode='real';
+assert.equal(selection.faultTargets('wire-open').length,0,'unwired physical views must not offer invisible wires');
+selection.components=[];selection.wires=[];
+for(const kind of ['open','short','reverse','wire-open'])assert.equal(selection.faultTargets(kind).length,0);
+console.log('PASS fault candidates match component types and visible wires, including an empty circuit');
+const replacement=build(0),lamps=replacement.components.filter(c=>c.type==='bulb'),normalEnds=JSON.stringify(replacement.wires.map(w=>[w.start,w.end]));
+replacement.applyFault('open',lamps[0].id);const undoCount=replacement.undoStack.length;
+replacement.replaceFault('short',lamps[1].id);assert.equal(replacement.undoStack.length,undoCount+1);assert.equal(replacement.components.find(c=>c.id===lamps[0].id).fault,undefined);assert.equal(replacement.currentFault().component.id,lamps[1].id);assert.equal(replacement.currentFault().kind,'short');
+replacement.undo();assert.equal(replacement.currentFault().component.id,lamps[0].id);assert.equal(replacement.currentFault().kind,'open');
+const unchanged=replacement.snapshotState();assert.throws(()=>replacement.replaceFault('open','C99999'));assert.equal(replacement.snapshotState(),unchanged);
+replacement.replaceFault('reverse',replacement.components.find(c=>c.type==='ammeter').id);replacement.replaceFault('wire-open','0');assert.equal(JSON.stringify(replacement.wires.map(w=>[w.start,w.end])),normalEnds);assert.equal(replacement.currentFault().wire,replacement.wires[0]);
+console.log('PASS changing fault type or location is atomic, undoable and restores reversed meter connections');

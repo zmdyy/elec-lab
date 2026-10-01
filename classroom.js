@@ -270,20 +270,48 @@ Object.assign(CircuitSimulator.prototype, {
   this.saveUndo();if(fault.component?.fault==='reverse')this.swapMeterConnections(fault.component,true);
   this.components.forEach(c=>delete c.fault);this.wires.forEach(w=>delete w.fault);this.faultHidden=false;this._routeKey=null;this.updatePropertiesPanel();this.recalc();this.updateMiniSchematicVisibility();
  },
- openFaultDialog() {
-  this.showClassroomDialog('fault','故障探究',`<p>教师先设置一处故障，再开始探究。学生观察测量现象，返回画布选中怀疑的元件或导线，随后判断位置。</p><div class="classroom-fields"><label>故障类型<select id="fault-kind"><option value="open">灯泡 / 电阻内部断路</option><option value="short">灯泡 / 电阻内部短路</option><option value="wire-open">导线断路</option><option value="reverse">电流表反接</option></select></label><label>设置位置<select id="fault-target"></select></label></div><div class="classroom-actions"><button id="fault-apply">设置故障</button><button class="primary" id="fault-start">开始探究，隐藏位置</button><button id="fault-check">判断画布中所选位置</button><button id="fault-reveal">揭示故障</button><button id="fault-remove">解除故障</button><button id="fault-return">返回电路观察</button></div><p id="fault-summary" role="status"></p><p class="classroom-note">断路不改变正常参数；内部短路按零电阻连接处理。电流表反接交换该表两端导线，不移动分流点。解除故障后恢复正常计算。</p>`);
-  const fillTargets=()=>{const kind=byId('fault-kind').value,options=kind==='wire-open'?this.activeWires().map(w=>({value:this.wires.indexOf(w),label:`导线 ${this.wires.indexOf(w)+1} · ${w.start.compId}—${w.end.compId}`})):this.components.filter(c=>kind==='reverse'?c.type==='ammeter':['resistor','bulb'].includes(c.type)).map(c=>({value:c.id,label:uid(c)}));byId('fault-target').innerHTML=options.map(o=>`<option value="${escape(o.value)}">${escape(o.label)}</option>`).join('');};
-  byId('fault-kind').onchange=fillTargets;fillTargets();
-  byId('fault-apply').onclick=()=>{try{this.applyFault(byId('fault-kind').value,byId('fault-target').value);this.renderFaultSummary();}catch(e){this.notify(e.message);}};
+ faultTargets(kind) {
+  if(kind==='wire-open')return this.activeWires().map(w=>({value:String(this.wires.indexOf(w)),label:`导线 ${this.wires.indexOf(w)+1} · ${w.start.compId}—${w.end.compId}`}));
+  return this.components.filter(c=>kind==='reverse'?c.type==='ammeter':['resistor','bulb'].includes(c.type)).map(c=>({value:c.id,label:uid(c)}));
+ },
+ replaceFault(kind,target) {
+  requireValid(this.faultTargets(kind).some(o=>o.value===String(target)),'请先选择有效的故障位置。');
+  if(!this.currentFault()){this.applyFault(kind,target);return;}
+  // Treat changing a fault as one reversible teacher action.
+  this.saveUndo();const suppressed=this.suppressUndo;this.suppressUndo=true;
+  try {this.removeFault();this.applyFault(kind,target);}
+  finally {this.suppressUndo=suppressed;}
+ },
+ updateFaultTargets(preferred) {
+  const kind=byId('fault-kind').value,select=byId('fault-target'),options=this.faultTargets(kind),previous=preferred??select.value;
+  select.innerHTML=options.length?options.map(o=>`<option value="${escape(o.value)}">${escape(o.label)}</option>`).join(''):'<option value="">暂无可选位置</option>';
+  if(options.some(o=>o.value===String(previous)))select.value=String(previous);
+  select.disabled=!options.length;byId('fault-apply').disabled=!options.length;
+  byId('fault-apply').textContent=this.currentFault()?'更换故障':'设置故障';
+  const reference=this.viewMode==='real'&&!this.activeWires().length&&this.wires.some(w=>w.view==='schematic');
+  byId('fault-show-schematic').hidden=!reference;
+  byId('fault-example').hidden=!!options.length;
+  byId('fault-target-help').textContent=options.length?`有 ${options.length} 个可选位置；选择后点击“${this.currentFault()?'更换故障':'设置故障'}”。${reference?'当前实物图尚未接线，观察故障前请先接线或切换到电路图。':''}`:reference?'当前实物图尚未接线。可以先完成实物接线，或切换到电路图设置导线故障。':kind==='wire-open'?'当前视图没有导线，请先连线，或载入下面的串联示例。':kind==='reverse'?'当前没有电流表，请先添加电流表，或载入下面的串联示例。':'当前没有灯泡或定值电阻，请先添加对应元件，或载入下面的串联示例。';
+ },
+ openFaultDialog(preferredKind) {
+  this.showClassroomDialog('fault','故障探究',`<p>教师先确认电路正常工作，再设置一处故障并开始探究。学生观察测量现象，返回画布选中怀疑的元件或导线，随后判断位置。</p><section id="fault-setup"><div class="classroom-fields"><label>故障类型<select id="fault-kind"><option value="open">灯泡 / 电阻内部断路</option><option value="short">灯泡 / 电阻内部短路</option><option value="wire-open">导线断路</option><option value="reverse">电流表反接</option></select></label><label>设置位置<select id="fault-target" aria-describedby="fault-target-help"></select></label></div><p id="fault-target-help" class="classroom-note" role="status"></p><div class="classroom-actions"><button id="fault-show-schematic" hidden>切换到电路图</button><button id="fault-example" hidden>载入串联示例</button><button id="fault-apply">设置故障</button></div><p class="classroom-note">载入示例会替换当前电路，可用“撤销”恢复；示例在两种视图中都已完成接线。</p></section><div class="classroom-actions"><button class="primary" id="fault-start">开始探究，隐藏位置</button><button id="fault-check">判断画布中所选位置</button><button id="fault-reveal">揭示故障</button><button id="fault-remove">解除故障</button><button id="fault-return">返回电路观察</button></div><p id="fault-summary" role="status"></p><p class="classroom-note">断路不改变正常参数；内部短路按零电阻连接处理。电流表反接交换该表两端导线，不移动分流点。解除故障后恢复正常计算。</p>`);
+  const f=this.currentFault(),kind=preferredKind||(f?.wire?'wire-open':f?.kind)||'open';byId('fault-kind').value=kind;
+  const target=f?.wire?String(this.wires.indexOf(f.wire)):f?.component?.id??this.selectedComponent?.id;
+  byId('fault-kind').onchange=()=>this.updateFaultTargets();this.updateFaultTargets(target);
+  byId('fault-apply').onclick=()=>{try{this.replaceFault(byId('fault-kind').value,byId('fault-target').value);this.updateFaultTargets();this.renderFaultSummary();}catch(e){this.notify(e.message);}};
+  byId('fault-show-schematic').onclick=()=>{const kind=byId('fault-kind').value;this.toggleViewMode();this.openFaultDialog(kind);};
+  byId('fault-example').onclick=()=>{const kind=byId('fault-kind').value;this.loadExperiment(0);this.wires.forEach(w=>w.view='both');this.recalc();this.fitView(310);this.openFaultDialog(kind);};
   byId('fault-start').onclick=()=>{if(!this.currentFault())return this.notify('请先设置故障。');this.faultHidden=true;this.updatePropertiesPanel();this.recalc();this.updateMiniSchematicVisibility();byId('classroom-dialog').close();this.notify('请观察电表和灯泡，并选中怀疑的元件或导线。');};
   byId('fault-check').onclick=()=>{const f=this.currentFault();byId('fault-summary').textContent=!f?'当前未设置故障。':(f.component===this.selectedComponent&&!!f.component)||(f.wire===this.selectedWire&&!!f.wire)?'判断正确！已找到故障位置。':'尚未找到故障位置，请继续观察或更换所选对象。';};
-  byId('fault-reveal').onclick=()=>{this.faultHidden=false;this.updatePropertiesPanel();this.recalc();this.updateMiniSchematicVisibility();this.renderFaultSummary();};
-  byId('fault-remove').onclick=()=>{this.removeFault();this.renderFaultSummary();};byId('fault-return').onclick=()=>byId('classroom-dialog').close();this.renderFaultSummary();
+  byId('fault-reveal').onclick=()=>{this.faultHidden=false;this.updatePropertiesPanel();this.recalc();this.updateMiniSchematicVisibility();this.updateFaultTargets();this.renderFaultSummary();};
+  byId('fault-remove').onclick=()=>{this.removeFault();this.updateFaultTargets();this.renderFaultSummary();};byId('fault-return').onclick=()=>byId('classroom-dialog').close();this.renderFaultSummary();
  },
  renderFaultSummary() {
-  const f=this.currentFault(),kind={open:'断路',short:'短接',reverse:'电流表反接'};
-  byId('fault-summary').textContent=!f?'当前未设置故障。':this.faultHidden?'故障位置已隐藏。请在画布选择怀疑的位置。':`${f.component?uid(f.component):'导线 '+(this.wires.indexOf(f.wire)+1)}：${kind[f.kind]}`;
-  for(const id of ['fault-kind','fault-target','fault-apply'])byId(id).hidden=!!f&&this.faultHidden;
+  const f=this.currentFault(),kind={open:'断路',short:'内部短路',reverse:'电流表反接'};
+  byId('fault-summary').textContent=!f?'当前未设置故障。':this.faultHidden?'故障位置已隐藏。请返回画布选择怀疑的元件或导线，再回来判断。':`${f.component?uid(f.component):'导线 '+(this.wires.indexOf(f.wire)+1)}：${kind[f.kind]}`;
+  byId('fault-setup').hidden=!!f&&this.faultHidden;
+  for(const id of ['fault-start','fault-reveal','fault-remove'])byId(id).disabled=!f;
+  byId('fault-check').disabled=!f||(!this.selectedComponent&&!this.selectedWire);
  },
  drawFaultComponent(comp) {
   if(!comp.fault||this.faultHidden||this.predictionHidden)return;
