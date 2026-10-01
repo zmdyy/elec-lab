@@ -44,7 +44,10 @@
     }
 
     /* ===== 主区域 ===== */
-    .main-content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .main-content { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    :fullscreen .simulator-container { width: 100%; height: 100vh; }
+    #fullscreen-feedback { color: #fff; font-size: 13px; }
+    .tool-button:disabled { opacity: .65; cursor: wait; }
     .toolbar {
         padding: 10px 12px; background: linear-gradient(to right, #3498db, #2980b9);
         display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
@@ -79,7 +82,7 @@
     .menu-dropdown div small { display: block; color: #7f8c8d; font-size: 11px; }
 
     /* ===== 画布 ===== */
-    .canvas-container { flex: 1; position: relative; background: #fbfcfd; overflow: hidden; }
+    .canvas-container { flex: 1; min-height: 0; position: relative; background: #fbfcfd; overflow: hidden; }
     #circuit-canvas { display: block; cursor: default; }
 
     /* 引导面板 */
@@ -272,6 +275,8 @@
             <button class="tool-button" id="arrange-real" title="整理元件并优化等效接线，保留电表测量支路与变阻器接线柱">整理实物线路</button>
             <button class="tool-button" id="arrange-schematic" title="按连接关系均匀摆放并整理直角导线">整理电路图</button>
             <button class="tool-button" id="fit-view">⊡ 适应</button>
+            <button class="tool-button" id="fullscreen-toggle" aria-pressed="false" title="进入全屏，按 Esc 退出">⛶ 全屏</button>
+            <span id="fullscreen-feedback" role="status" hidden></span>
             <button class="tool-button" id="zoom-in">放大＋</button>
             <button class="tool-button" id="zoom-out">缩小－</button>
             <button class="tool-button" id="input-mode-btn">🖱 鼠标</button>
@@ -519,6 +524,8 @@ class CircuitSimulator {
         });
         document.getElementById('view-toggle').addEventListener('click', () => this.toggleViewMode());
         document.getElementById('fit-view').addEventListener('click', () => this.fitView(document.getElementById('guide-panel').classList.contains('show') ? 310 : 20));
+        document.getElementById('fullscreen-toggle').addEventListener('click', () => this.toggleFullscreen());
+        document.addEventListener('fullscreenchange', () => this.syncFullscreen());
         document.getElementById('zoom-in').addEventListener('click', () => this.zoom(0.1));
         document.getElementById('zoom-out').addEventListener('click', () => this.zoom(-0.1));
         document.getElementById('input-mode-btn').addEventListener('click', () => this.showInputModeModal());
@@ -537,6 +544,44 @@ class CircuitSimulator {
         const savedMode = this.getSavedInputMode();
         if (savedMode) this.chooseInputMode(savedMode, false);
         else this.showInputModeModal();
+    }
+
+    async toggleFullscreen() {
+        const button = document.getElementById('fullscreen-toggle');
+        const feedback = document.getElementById('fullscreen-feedback');
+        if (button.disabled) return;
+        feedback.hidden = true;
+        button.disabled = true;
+        try {
+            if (document.fullscreenElement) {
+                await document.exitFullscreen();
+            } else {
+                if (!document.documentElement.requestFullscreen) throw new Error('unsupported');
+                // 根节点包含工具栏、属性面板及操作方式弹窗。
+                await document.documentElement.requestFullscreen();
+            }
+        } catch (_) {
+            feedback.textContent = document.fullscreenElement
+                ? '退出全屏失败，请按 Esc 退出。'
+                : '浏览器未允许全屏；可在独立窗口打开，或在电脑上按 F11。';
+            feedback.hidden = false;
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    syncFullscreen() {
+        const active = !!document.fullscreenElement;
+        const button = document.getElementById('fullscreen-toggle');
+        button.textContent = active ? '⛶ 退出全屏' : '⛶ 全屏';
+        button.setAttribute('aria-pressed', String(active));
+        button.classList.toggle('active', active);
+        button.title = active ? '退出全屏，也可按 Esc' : '进入全屏，按 Esc 退出';
+        document.getElementById('fullscreen-feedback').hidden = true;
+        requestAnimationFrame(() => {
+            this.resizeCanvas();
+            this.fitView(document.getElementById('guide-panel').classList.contains('show') ? 310 : 20);
+        });
     }
 
     setTool(tool) {
