@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>初中电学实验室 · 直流电路仿真</title>
+<link rel="stylesheet" href="classroom.css">
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -481,7 +482,10 @@ class CircuitSimulator {
     }
 
     setupEventListeners() {
-        window.addEventListener('resize', () => this.resizeCanvas());
+        window.addEventListener('resize', () => {
+            this.resizeCanvas();
+            this.fitView(document.getElementById('guide-panel').classList.contains('show') ? 310 : 20);
+        });
 
         this.canvas.addEventListener('mousedown', e => this.handleMouseDown(e));
         this.canvas.addEventListener('mousemove', e => this.handleMouseMove(e));
@@ -603,7 +607,8 @@ class CircuitSimulator {
             activeExperiment: this.activeExperiment,
             schematicReference: this.schematicReference,
             realLayoutSignature: this._realLayoutSignature,
-            schematicLayoutSignature: this._schematicLayoutSignature
+            schematicLayoutSignature: this._schematicLayoutSignature,
+            classroom: this.classroomSnapshot?.()
         });
     }
 
@@ -627,6 +632,7 @@ class CircuitSimulator {
         this.panX = s.panX ?? 40; this.panY = s.panY ?? 30; this.scale = s.scale ?? 1;
         this.activeExperiment = s.activeExperiment ?? null;
         this.schematicReference = s.schematicReference || null;
+        this.restoreClassroom?.(s.classroom);
         this.selectedComponent = null; this.selectedWire = null; this.wireDrawing = false; this.draftWire = null;
         this.syncViewButton();
         this.updateMiniSchematicVisibility();
@@ -782,14 +788,16 @@ class CircuitSimulator {
         const connected = terms.filter(t => this.isTerminalConnected(comp, t.id));
         const selected = terms.find(t => t.range === comp.range) || terms[0];
         comp._terminalWarning = '';
-        if (this.viewMode === 'schematic') {
-            comp.range = selected.range;
-            return selected;
-        }
-        if (!this.isTerminalConnected(comp, 'neg')) comp._terminalWarning = '负接线柱未接入电路';
+        if (this.viewMode === 'real' && !this.isTerminalConnected(comp, 'neg')) comp._terminalWarning = '负接线柱未接入电路';
+        // The connected range post defines the electrical port in both views.
+        // A saved physical connection must not change readings in the schematic.
         if (connected.length === 1) {
             comp.range = connected[0].range;
             return connected[0];
+        }
+        if (this.viewMode === 'schematic') {
+            comp.range = selected.range;
+            return selected;
         }
         if (connected.length > 1) {
             comp._terminalWarning = '两个量程接线柱同时接入，请只选择一个量程';
@@ -1355,7 +1363,7 @@ class CircuitSimulator {
     }
 
     potCurrentPaths(comp,view) {
-        if(!this.simulationRunning)return [];
+        if(!this.simulationRunning || this.predictionHidden)return [];
         const p=comp.position,paths=[],add=(points,current)=>{if(Math.abs(current)>1e-6)paths.push({points:current>0?points:[...points].reverse(),current:Math.abs(current)});};
         const principle=view==='principle',real=view==='real';
         const left=principle?150:real?-64:-25,right=principle?450:real?64:25;
@@ -1401,7 +1409,7 @@ class CircuitSimulator {
             ctx.fillStyle=bg;ctx.beginPath();ctx.arc(px,py,11,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.fillStyle=ink;ctx.fillText(label,tx,py);
         }
         this.drawPotCurrent(comp,'principle',ctx);
-        document.getElementById('pot-principle-note').textContent=`A—P：${(comp.resistance*comp.position).toFixed(1)} Ω　 P—B：${(comp.resistance*(1-comp.position)).toFixed(1)} Ω`;
+        document.getElementById('pot-principle-note').textContent=this.predictionHidden?'请先预测接入电阻的变化，再揭示结果。':`A—P：${(comp.resistance*comp.position).toFixed(1)} Ω　 P—B：${(comp.resistance*(1-comp.position)).toFixed(1)} Ω`;
     }
 
     syncViewButton() {
@@ -1503,7 +1511,7 @@ class CircuitSimulator {
     }
 
     handleKeyDown(e) {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+        if (['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName) || e.target.isContentEditable || document.getElementById('classroom-dialog')?.open) return;
         if (e.key === 'r' || e.key === 'R') this.rotateSelected();
         else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); this.deleteSelected(); }
         else if (e.key === 'Escape') {
@@ -1657,6 +1665,8 @@ class CircuitSimulator {
         this.shortCircuit = false;
         this.clearFlow();
         if (this.components.length === 0) {
+            this._solutionState = 'nosource';
+            document.getElementById('measurement-results').textContent = '请先放入电源';
             document.getElementById('circuit-state').innerHTML = '<p>请从左侧拖入元件开始搭建电路</p>';
             return;
         }
@@ -1680,13 +1690,16 @@ class CircuitSimulator {
         const add = k => { if (!(k in parent)) parent[k] = k; };
 
         this.components.forEach(c => this.terminals(c).forEach(t => add(c.id + '_' + t.id)));
-        this.activeWires().forEach(w => {
+        const electricalWires = this.activeWires().filter(w => w.fault !== 'open');
+        electricalWires.forEach(w => {
             const s = this.wireEndKey(w, 'start'), e = this.wireEndKey(w, 'end');
             if (s && e) { add(s); add(e); union(s, e); }
         });
         this.components.forEach(c => {
             if (c.type === 'switch' && c.state === 'closed') union(c.id + '_a', c.id + '_b');
             if (c.type === 'potentiometer') union(c.id + '_c', c.id + '_d'); // 滑片杆两端相连
+            if (c.fault === 'short' && ['resistor','bulb'].includes(c.type))
+                union(c.id + (c.type === 'bulb' ? '_shell' : '_a'), c.id + (c.type === 'bulb' ? '_tip' : '_b'));
         });
 
         // —— 2. 编号节点（取一个为地）——
@@ -1704,6 +1717,7 @@ class CircuitSimulator {
         let shorted = false;
         this.components.forEach(c => {
             if (c.type === 'resistor' || c.type === 'bulb') {
+                if (c.fault === 'open' || c.fault === 'short') return;
                 const k1 = c.type === 'bulb' ? c.id+'_shell' : c.id+'_a';
                 const k2 = c.type === 'bulb' ? c.id+'_tip' : c.id+'_b';
                 resistors.push({k1, k2, R:Math.max(c.resistance, 1e-6), comp:c, kind:'series'});
@@ -1724,6 +1738,14 @@ class CircuitSimulator {
             }
         });
 
+        // Ideal ammeters also conduct with zero resistance. Detect a source short
+        // through them without merging away the branches whose currents we measure.
+        const idealParent = {...parent};
+        const idealFind = key => { while (idealParent[key] !== key) key = idealParent[key]; return key; };
+        this.components.filter(c => c.type === 'ammeter').forEach(c => {
+            idealParent[idealFind(this.meterPositiveKey(c))] = idealFind(c.id+'_neg');
+        });
+        if (this.components.some(c => c.type === 'battery' && idealFind(c.id+'_pos') === idealFind(c.id+'_neg'))) shorted = true;
         if (shorted) { this.reportState('short'); this.draw(); return; }
 
         // —— 4. 装配 MNA 矩阵 ——
@@ -1811,17 +1833,19 @@ class CircuitSimulator {
         });
         // Kirchhoff current balance on a spanning tree of each ideal-wire net.
         // The rod C-D is an internal link; injecting the same current at both posts doubles it.
-        const adjacency=new Map(),link=(a,b,w=null)=>{for(const [u,v] of [[a,b],[b,a]]){if(!adjacency.has(u))adjacency.set(u,[]);adjacency.get(u).push({to:v,wire:w});}};
-        this.activeWires().forEach(w=>{w._flowMag=0;w._flowDir=1;link(this.wireEndKey(w,'start'),this.wireEndKey(w,'end'),w);});
+        const adjacency=new Map(),link=(a,b,w=null,component=null)=>{for(const [u,v] of [[a,b],[b,a]]){if(!adjacency.has(u))adjacency.set(u,[]);adjacency.get(u).push({to:v,wire:w,component,from:a});}};
+        electricalWires.forEach(w=>{w._flowMag=0;w._flowDir=1;link(this.wireEndKey(w,'start'),this.wireEndKey(w,'end'),w);});
+        this.components.filter(c=>c.fault==='short'&&['bulb','resistor'].includes(c.type)).forEach(c=>link(c.id+(c.type==='bulb'?'_shell':'_a'),c.id+(c.type==='bulb'?'_tip':'_b'),null,c));
         this.components.filter(c=>c.type==='potentiometer').forEach(c=>link(c.id+'_c',c.id+'_d'));
         this.components.filter(c=>c.type==='switch'&&c.state==='closed').forEach(c=>link(c.id+'_a',c.id+'_b'));
         const seen=new Set();this._hasFlow=false;
         for(const root of adjacency.keys()){
             if(seen.has(root))continue;
             const order=[root],parents=new Map(),sum=new Map();seen.add(root);
-            for(let i=0;i<order.length;i++){const u=order[i];sum.set(u,termFlow[u]||0);for(const edge of adjacency.get(u)||[])if(!seen.has(edge.to)){seen.add(edge.to);parents.set(edge.to,{node:u,wire:edge.wire});order.push(edge.to);}}
+            for(let i=0;i<order.length;i++){const u=order[i];sum.set(u,termFlow[u]||0);for(const edge of adjacency.get(u)||[])if(!seen.has(edge.to)){seen.add(edge.to);parents.set(edge.to,{node:u,wire:edge.wire,component:edge.component,from:edge.from});order.push(edge.to);}}
             for(let i=order.length-1;i>0;i--){const u=order[i],edge=parents.get(u),flow=sum.get(u);sum.set(edge.node,(sum.get(edge.node)||0)+flow);
                 if(edge.wire){const signed=flow*(this.wireEndKey(edge.wire,'start')===u?1:-1);edge.wire._flowMag=Math.abs(signed);edge.wire._flowDir=signed>=0?1:-1;if(Math.abs(signed)>1e-5)this._hasFlow=true;}
+                if(edge.component)edge.component._current=flow*(edge.from===u?1:-1);
             }
         }
 
@@ -1853,6 +1877,7 @@ class CircuitSimulator {
             <div class="measurement-value"><span>总电阻:</span><span class="value">${R.toFixed(1)} Ω</span></div>`;
     }
     reportState(kind, U = 0) {
+        this.shortCircuit = kind === 'short';
         this.clearFlow();
         const sd = document.getElementById('circuit-state');
         const md = document.getElementById('measurement-results');
@@ -1872,6 +1897,8 @@ class CircuitSimulator {
     }
 
     stateWithChecks(baseHtml, kind) {
+        if (this.predictionHidden) return '<p>请先预测电路现象，再点击“揭示结果”。</p>';
+        if (this.faultHidden) return '<p>故障探究中：请观察灯泡及电表，选择怀疑的元件或导线。</p>';
         const issues = this.getAmmeterPolarityIssues(kind === 'open');
         const openSwitches = this.components.filter(c => c.type === 'switch' && c.state === 'open').length;
         const floating = this.components.flatMap(c => this.terminals(c).map(t => ({c, t})))
@@ -1960,6 +1987,8 @@ class CircuitSimulator {
         if (this.simulationRunning) this.solveCircuit();
         else this.draw();
         this.updateCircuitInfo();
+        this.refreshClassroom?.();
+        this.scheduleAutosave?.();
     }
 
     // 电流流动动画循环
@@ -1989,16 +2018,16 @@ class CircuitSimulator {
             this.components.forEach(c => this.drawComponent(c));
             this.activeWires().forEach(w => this.drawWire(w, w === this.selectedWire));
             if (this.wireDrawing && this.draftWire) this.drawDraftWire();
-            this.drawAllTerminals();
+            if(!this.exportingImage)this.drawAllTerminals();
         } else {
             this.activeWires().forEach(w => this.drawWire(w, w === this.selectedWire));
             if (this.wireDrawing && this.draftWire) this.drawDraftWire();
             this.components.forEach(c => this.drawComponent(c));
-            this.drawAllTerminals();
+            if(!this.exportingImage)this.drawAllTerminals();
         }
         this.drawSchematicJunctions();
         this._drawingNetwork=false;
-        if(this.simulationRunning)this.drawNetworkFlow();
+        if(this.simulationRunning&&!this.predictionHidden)this.drawNetworkFlow();
         if (this.selectedComponent) this.highlight(this.selectedComponent);
         this.drawPotPrinciple();
 
@@ -2068,6 +2097,7 @@ class CircuitSimulator {
         // 电流流动光点动画
         if (!this._drawingNetwork && this.simulationRunning && Math.abs(w._flowMag || 0) > 1e-9) this.drawFlow(w, pts);
         if (selected) this.drawWireControlPoints(w);
+        this.drawFaultWire?.(w, pts);
     }
 
     resolveRealWire(w) {
@@ -2607,6 +2637,7 @@ class CircuitSimulator {
         pts.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));ctx.stroke();ctx.restore();
         if(!this._drawingNetwork&&this.simulationRunning&&Math.abs(w._flowMag||0)>1e-9)this.drawFlow(w,pts);
         if(selected)this.drawWireControlPoints(w);
+        this.drawFaultWire?.(w, pts);
     }
 
     drawWireControlPoints(w) {
@@ -2717,9 +2748,10 @@ class CircuitSimulator {
             this[fn](comp);
         }
         // 电流方向箭头（电路图模式）
-        if (this.viewMode === 'schematic' && this.simulationRunning &&
+        if (this.viewMode === 'schematic' && this.simulationRunning && !this.predictionHidden &&
             (comp.type==='resistor'||comp.type==='bulb'||comp.type==='voltmeter') && Math.abs(comp._current) > 1e-9)
             this.drawCurrentArrow(comp);
+        this.drawFaultComponent?.(comp);
         ctx.restore();
     }
 
@@ -2780,7 +2812,7 @@ class CircuitSimulator {
     }
 
     bulbAppearance(comp) {
-        const current=this.simulationRunning?Math.abs(comp.current||0):0;
+        const current=this.simulationRunning&&!this.predictionHidden?Math.abs(comp.current||0):0;
         const rated=Math.max(comp.ratedCurrent||.3,.001),power=current*current*Math.max(comp.resistance||0,0);
         const ratio=(current/rated)**2;
         const level=Math.min(1,Math.pow(ratio,.7));
@@ -2807,9 +2839,9 @@ class CircuitSimulator {
         const d = 12 * Math.SQRT1_2;
         ctx.beginPath(); ctx.moveTo(-d,-d); ctx.lineTo(d,d); ctx.moveTo(d,-d); ctx.lineTo(-d,d); ctx.stroke();
         let txt = comp.label||'灯泡';
-        if (this.simulationRunning && comp.isLit && comp.current > (comp.ratedCurrent||0.3)*1.05) txt = (comp.label||'灯泡')+'(过载!)';
+        if (this.simulationRunning && !this.predictionHidden && comp.isLit && comp.current > (comp.ratedCurrent||0.3)*1.05) txt = (comp.label||'灯泡')+'(过载!)';
         this.label(comp, txt, 0, 28, {font:'12px "Microsoft YaHei"', color: txt.includes('过载')?'#e74c3c':'#333'});
-        if (this.simulationRunning && comp.current > 1e-4)
+        if (this.simulationRunning && !this.predictionHidden && comp.current > 1e-4)
             this.label(comp, comp.current.toFixed(2)+'A', 0, 42, {font:'11px Arial', color:'#7f8c8d'});
     }
 
@@ -2841,7 +2873,7 @@ class CircuitSimulator {
     drawMeter(comp, letter) {
         const ctx = this.ctx;
         this.meterActiveTerminal(comp);
-        if (comp._polarityWarning) {
+        if (comp._polarityWarning && !this.predictionHidden && !this.faultHidden) {
             ctx.save();
             ctx.strokeStyle = '#e74c3c'; ctx.lineWidth = 3; ctx.setLineDash([4,3]);
             ctx.beginPath(); ctx.arc(0,0,24,0,7); ctx.stroke();
@@ -2858,9 +2890,9 @@ class CircuitSimulator {
         this.label(comp, '−', -24, -12, {font:'bold 12px Arial', color:'#2980b9'});
         const vertical=this.viewMode==='schematic'&&Math.abs(Math.sin(this.componentAngle(comp)*Math.PI/180))>.5;
         if(comp.label)this.label(comp,comp.label,0,this.viewMode==='real'?98:vertical?50:28,{font:'bold 15px Georgia'});
-        if (this.simulationRunning) {
+        if (this.simulationRunning && !this.predictionHidden) {
             const val = letter === 'A' ? comp.measurement.toFixed(2)+'A' : comp.measurement.toFixed(2)+'V';
-            const text = comp._polarityWarning ? '反接!' : (over ? '超量程!' : val);
+            const text = comp._polarityWarning && !this.faultHidden ? '反接!' : (over ? '超量程!' : val);
             this.label(comp, text, 0, vertical?-65:-30,
                 {font:'bold 12px "Microsoft YaHei"', color: (over || comp._polarityWarning) ? '#e74c3c' : '#16a085'});
         }
@@ -2983,12 +3015,13 @@ class CircuitSimulator {
         const fraction=this.simulationRunning?Math.max(-.08,Math.min(1.08,(comp.measurement||0)/(comp.range||1))):0;
         const angle=(-140+100*fraction)*Math.PI/180;
         ctx.strokeStyle='#282522';ctx.lineWidth=.8;ctx.beginPath();ctx.moveTo(0,-4.8);
-        ctx.lineTo(272*.24*Math.cos(angle),-4.8+272*.24*Math.sin(angle));ctx.stroke();
+        if (!this.predictionHidden) { ctx.lineTo(272*.24*Math.cos(angle),-4.8+272*.24*Math.sin(angle));ctx.stroke(); }
+        else this.label(comp,'?',0,-32,{font:'bold 30px Arial',color:'#64748b'});
         if(comp.label)this.label(comp,comp.label,0,this.viewMode==='real'?98:28,{font:'bold 15px Georgia'});
-        if (this.simulationRunning) {
+        if (this.simulationRunning && !this.predictionHidden) {
             const val = letter === 'A' ? comp.measurement.toFixed(2)+'A' : comp.measurement.toFixed(2)+'V';
             const over = Math.abs(comp.measurement) > comp.range;
-            const text = comp._polarityWarning ? '反接!' : (over ? '超量程!' : val);
+            const text = comp._polarityWarning && !this.faultHidden ? '反接!' : (over ? '超量程!' : val);
             this.label(comp, text, 0, -94, {font:'bold 12px "Microsoft YaHei"', color:(over||comp._polarityWarning)?'#e74c3c':'#16a085'});
         }
     }
@@ -3064,9 +3097,9 @@ class CircuitSimulator {
                 const allTerms = c.type === 'ammeter' ? '−、0.6、3 A' : '−、3、15 V';
                 html = `<div class="property-control"><label>接线柱</label><input value="${allTerms}" readonly></div>
                     <div class="property-control"><label>当前接入量程</label><input value="${active.label} ${c.type==='ammeter'?'A':'V'}" readonly></div>
-                    <div class="property-control"><label>当前读数</label><input value="${c.type==='ammeter'?c.measurement.toFixed(3)+' A':c.measurement.toFixed(2)+' V'}" readonly></div>
+                    <div class="property-control"><label>当前读数</label><input value="${this.predictionHidden?'待揭示':c.type==='ammeter'?c.measurement.toFixed(3)+' A':c.measurement.toFixed(2)+' V'}" readonly></div>
                     ${c._terminalWarning ? `<div class="badge-warn">${c._terminalWarning}</div>` : ''}
-                    ${c.type==='ammeter' && c._polarityWarning ? '<div class="badge-warn">电流表反接：请让电流从“0.6/3”量程接线柱流入，从“−”接线柱流出。</div>' : ''}`;
+                    ${c.type==='ammeter' && c._polarityWarning && !this.predictionHidden && !this.faultHidden ? '<div class="badge-warn">电流表反接：请让电流从“0.6/3”量程接线柱流入，从“−”接线柱流出。</div>' : ''}`;
                 break;
         }
         props.innerHTML = html;
@@ -3115,6 +3148,7 @@ class CircuitSimulator {
 
     clearAll() {
         this.saveUndo();
+        this.restoreClassroom?.();
         this.components = []; this.wires = [];
         this.activeExperiment = null; this.schematicReference = null;this._realLayoutSignature=null;this._schematicLayoutSignature=null;this._routeKey=null;
         this.selectedComponent = null; this.selectedWire = null;
@@ -3372,5 +3406,6 @@ window.addEventListener('DOMContentLoaded', () => {
     window.sim = new CircuitSimulator('circuit-canvas');
 });
 </script>
+<script src="classroom.js"></script>
 </body>
 </html>

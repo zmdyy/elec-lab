@@ -1,0 +1,49 @@
+/* Classroom tools share the simulator's light/dark theme. */
+.classroom-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:7px 12px; background:#e9f2f9; border-bottom:1px solid #ccd8e5; }
+.classroom-toolbar button { font-size:14px; }
+#classroom-status { margin-left:auto; color:#476078; font-size:12px; }
+#recovery-banner { padding:8px 12px; background:#fff4d6; font-size:14px; }
+#recovery-banner button { margin-left:10px; }
+#classroom-dialog { position:fixed; inset:0; margin:auto; width:min(1050px,calc(100vw - 32px)); max-height:calc(100vh - 32px); padding:0; border:1px solid #9aaabe; border-radius:12px; background:#fff; color:#243247; box-shadow:0 12px 60px #0005; }
+#classroom-dialog::backdrop { background:#07101d99; }
+#classroom-dialog header { position:sticky; top:0; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 20px; background:inherit; border-bottom:1px solid #d5dfe9; z-index:1; }
+#classroom-dialog h2 { font-size:22px; }
+#classroom-dialog .dialog-body { padding:18px 20px; overflow:auto; }
+#classroom-dialog button,#recovery-banner button { padding:9px 14px; border:1px solid #a8bacd; border-radius:6px; background:#f1f7fc; color:inherit; cursor:pointer; font-size:15px; }
+#classroom-dialog button.primary { background:#246eb2; border-color:#246eb2; color:#fff; }
+#classroom-dialog button.danger { color:#b42318; }
+#classroom-dialog button:disabled { opacity:.5; cursor:default; }
+#classroom-dialog .dialog-close { font-size:24px; padding:2px 10px; }
+.classroom-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:14px 0; }
+.classroom-fields { display:flex; flex-wrap:wrap; gap:16px; align-items:end; margin:14px 0; }
+.classroom-fields label { display:flex; flex-direction:column; gap:6px; font-size:16px; }
+#classroom-dialog input,#classroom-dialog select,#classroom-dialog textarea { border:1px solid #acbac9; border-radius:6px; padding:9px 10px; color:inherit; background:inherit; font:inherit; }
+#classroom-dialog select { max-width:100%; }
+#classroom-dialog textarea { width:100%; min-height:110px; resize:vertical; line-height:1.6; }
+#classroom-dialog p { line-height:1.7; margin:8px 0; }
+.classroom-note { color:#52647b; font-size:14px; }
+#classroom-message { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); max-width:calc(100vw - 32px); border-radius:8px; padding:12px 18px; color:#fff; background:#213a55; font-size:16px; z-index:1000; pointer-events:none; }
+#record-table-wrap { overflow:auto; max-height:260px; border:1px solid #d5dfe9; border-radius:6px; }
+#record-table { width:100%; border-collapse:collapse; font-size:15px; white-space:nowrap; }
+#record-table th,#record-table td { padding:10px 12px; text-align:right; border-bottom:1px solid #d5dfe9; }
+#record-table th { background:#e9f2f9; position:sticky; top:0; }
+#record-table th:nth-child(2),#record-table td:nth-child(2) { text-align:left; }
+#record-plot { width:100%; height:auto; display:block; margin:16px 0; border:1px solid #d5dfe9; border-radius:8px; }
+#fault-summary { padding:12px; border:1px solid #b6ccdf; border-radius:8px; }
+body.dark .classroom-toolbar { background:#203044; border-color:#42536a; }
+body.dark #classroom-status,body.dark .classroom-note { color:#b7c8dc; }
+body.dark #recovery-banner { background:#423924; color:#f4dda5; }
+body.dark #classroom-dialog { background:#1e293b; color:#e2e8f0; }
+body.dark #classroom-dialog header,body.dark #record-table th,body.dark #record-table td { border-color:#46566d; }
+body.dark #classroom-dialog button,body.dark #recovery-banner button,body.dark #record-table th { background:#293b50; border-color:#546781; }
+body.dark #classroom-dialog button.primary { background:#246eb2; }
+body.dark #classroom-dialog button.danger { color:#fda8a8; }
+@media(max-width:900px) { .classroom-toolbar {gap:5px;padding:5px;} #classroom-status{width:100%;margin:0;} #classroom-dialog .dialog-body{padding:12px;} }
+
+#classroom-dialog [hidden],#classroom-message[hidden],#recovery-banner[hidden] { display:none; }
+
+.classroom-dialog-feedback { padding:10px 12px; border:1px solid #d39b42; border-radius:6px; background:#f59e0b1a; font-weight:600; }
+
+#prediction-banner { padding:12px 16px; max-height:110px; overflow:auto; background:#fff3d6; color:#714c13; font-size:18px; font-weight:600; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
+#prediction-banner[hidden] {display:none;}
+body.dark #prediction-banner {background:#443927;color:#ffe0a0;}
