@@ -145,7 +145,7 @@ for(const lower of ['a','b'])for(const upper of ['c','d'])for(const reversed of 
   assert.ok(paths.every(p=>p.current>1e-6));
   const top=view==='principle'?55:view==='real'?-30:-28;
   const rod=paths.find(p=>p.points.every(q=>q.y===top));assert.ok(rod);
-  const terminalX=view==='principle'?(upper==='c'?80:520):view==='real'?(upper==='c'?-112:112):48;
+  const terminalX=view==='principle'?(upper==='c'?80:520):view==='real'?(upper==='c'?-112:112):m.potSymbolGeometry(pot).upperX;
   assert.ok(rod.points.some(p=>p.x===terminalX),'rod must reach actual connected post');
  }
  m.simulationRunning=false;assert.equal(m.potCurrentPaths(pot,'real').length,0);
@@ -343,3 +343,59 @@ for(const mode of ['schematic','real'])for(let index=0;index<4;index++){
  const b=m.components.find(c=>c.type==='battery');assert.ok(m.terminalPos(b.id,'pos').x>m.terminalPos(b.id,'neg').x);
 }
 console.log('PASS all four experiment loaders in both views retain the prepared reference, polarity and wiring practice');
+
+// A two-terminal symbol must never reverse the displayed slider motion for B-P.
+for(const lower of ['a','b'])for(const upper of ['c','d']){
+ const m=build(3),p=m.components.find(c=>c.type==='potentiometer');
+ for(const w of m.wires)for(const e of ['start','end'])if(w[e].compId===p.id)w[e].termId=['a','b'].includes(w[e].termId)?lower:upper;
+ m.viewMode='schematic';m.currentTool='wire';
+ const shown=m.terminals(p).filter(t=>!t.hidden);
+ assert.equal(shown.length,2,'wiring exposes only one fixed end and one slider lead');
+ assert.deepEqual(Array.from(shown,t=>t.id).sort(),[lower,upper].sort());
+ for(const position of [.1,.4,.8]){
+  p.position=position;m.solveCircuit();
+  assert.equal(m.potSymbolGeometry(p).sliderX,-25+50*position);
+  for(const view of ['real','schematic','principle']){
+   const paths=m.potCurrentPaths(p,view),y=view==='principle'?210:view==='real'?19:24,top=view==='principle'?55:view==='real'?-30:-28;
+   const slider=paths.find(path=>path.points.length===2&&path.points.some(q=>q.y===y)&&path.points.some(q=>q.y===top));
+   const normalized=(slider.points[0].x-(view==='principle'?150:view==='real'?-64:-25))/(view==='principle'?300:view==='real'?128:50);
+   assert.ok(Math.abs(normalized-position)<1e-8,'all three views must show the same left/right slider position');
+  }
+ }
+ const labels=[],lines=[],arcs=[];let last;
+ m.ctx={beginPath(){last=null;},moveTo(x,y){last={x,y};},lineTo(x,y){if(last)lines.push([last,{x,y}]);last={x,y};},
+  save(){},restore(){},fillRect(){},strokeRect(){},stroke(){},fill(){},closePath(){},arc(...a){arcs.push(a);}};
+ m.label=(c,t)=>labels.push(t);m.simulationRunning=false;m.drawPotentiometer(p);
+ assert.ok(!labels.some(t=>/^[ABCD]$/.test(t)));
+ const unusedX=lower==='a'?48:-48;
+ assert.ok(!lines.some(([a,b])=>a.y===24&&b.y===24&&(a.x===unusedX||b.x===unusedX)),'unused resistor end has no lead');
+ m.components=[p];m.currentTool='select';m.drawAllTerminals();assert.equal(arcs.length,0,'no permanent colored binding-post dots');
+ m.currentTool='wire';m.lastMousePos={x:-10000,y:-10000};m.drawAllTerminals();assert.equal(arcs.length,2,'temporary connection targets for two functional ports');
+}
+console.log('PASS two-terminal rheostat symbol: no unused lead or post labels, two temporary targets, identical slider motion in all views');
+
+// Only unconfirmed schematic contacts may be mapped; preserve resistance and all other branch nodes.
+for(const builder of [()=>build(3),buildLatestMeasurement])for(const reverse of [false,true]){
+ const m=builder(),p=m.components.find(c=>c.type==='potentiometer');
+ if(reverse)m.wires.reverse();m.components.find(c=>c.type==='switch').state='closed';p.position=.23;
+ m.rememberPotContacts({compId:p.id,termId:'a'});assert.equal(p.potContactMode,'auto');
+ m.solveCircuit();const readings=m.components.map(c=>c.measurement||0),saved=m.wires.map(w=>[{...w.start},{...w.end}]);
+ m.viewMode='real';m.layoutRealCircuit(true);m.solveCircuit();assert.equal(p.potContactMode,'mapped');assertSafeRoutes(m);
+ const ports=m.wires.flatMap(w=>[w.start,w.end]).filter(e=>e.compId===p.id).map(e=>e.termId),lower=ports.find(t=>['a','b'].includes(t)),upper=ports.find(t=>['c','d'].includes(t));
+ assert.ok(Math.abs(p.resistance*(lower==='a'?p.position:1-p.position)-p.resistance*.23)<1e-8);
+ const remapped=saved.map(row=>row.map(e=>e.compId===p.id?{...e,termId:['a','b'].includes(e.termId)?lower:upper}:e));
+ assertEquivalentConnections(m,JSON.stringify(remapped));m.components.forEach((c,i)=>assert.ok(Math.abs((c.measurement||0)-readings[i])<1e-6));
+ const chosen=JSON.stringify(ports),position=p.position;
+ for(const view of ['schematic','real','schematic']){m.viewMode=view;m.layoutCircuit(true,view==='real');m.solveCircuit();
+  assert.equal(p.position,position);assert.equal(JSON.stringify(m.wires.flatMap(w=>[w.start,w.end]).filter(e=>e.compId===p.id).map(e=>e.termId)),chosen);}
+ m.viewMode='real';m.rememberPotContacts({compId:p.id,termId:upper});assert.equal(p.potContactMode,'pinned');
+ console.log('PASS schematic-first rheostat mapping: '+(builder===buildLatestMeasurement?'measurement':'series')+', '+(reverse?'reversed':'original')+' order, '+lower.toUpperCase()+'-'+upper.toUpperCase()+', unchanged resistance, readings and meter branches');
+}
+
+const leadChoice=build(3),leadPot=leadChoice.components.find(c=>c.type==='potentiometer');leadChoice.viewMode='schematic';
+const rodWire=leadChoice.wires.find(w=>[w.start,w.end].some(e=>e.compId===leadPot.id&&['c','d'].includes(e.termId)));
+const far=leadChoice.components.find(c=>c.id===(rodWire.start.compId===leadPot.id?rodWire.end:rodWire.start).compId);
+leadPot.x=400;leadPot.y=400;far.x=50;far.y=340;leadChoice.optimizePotSymbolLeads([rodWire]);assert.equal(leadPot.potUpperSide,-1);
+leadPot.potUpperSide=1;
+assert.equal(leadChoice.potSymbolGeometry(leadPot).upperX,48);
+console.log('PASS slider lead can exit left or right to shorten schematic wiring without changing physical contacts');

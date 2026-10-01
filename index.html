@@ -592,10 +592,11 @@ class CircuitSimulator {
     terminals(comp) {
         if (this.viewMode === 'schematic') {
             if(comp.type==='potentiometer') {
-                const bOnly=this.isTerminalConnected(comp,'b')&&!this.isTerminalConnected(comp,'a');
-                return [{id:'a',x:bOnly?48:-48,y:24,hidden:bOnly&&this.currentTool!=='wire'},
-                    {id:'b',x:bOnly?-48:48,y:24,hidden:!this.isTerminalConnected(comp,'b')&&this.currentTool!=='wire'},
-                    {id:'c',x:48,y:-28},{id:'d',x:48,y:-28}];
+                const {fixed,upperX}=this.potSymbolGeometry(comp);
+                return [{id:'a',x:-48,y:24,hidden:fixed!=='a'&&!this.isTerminalConnected(comp,'a')},
+                    {id:'b',x:48,y:24,hidden:fixed!=='b'&&!this.isTerminalConnected(comp,'b')},
+                    {id:'c',x:upperX,y:-28,hidden:this.isTerminalConnected(comp,'d')&&!this.isTerminalConnected(comp,'c')},
+                    {id:'d',x:upperX,y:-28,hidden:!this.isTerminalConnected(comp,'d')}];
             }
             if (comp.type === 'bulb') return [ {id:'shell', x:-32, y:0}, {id:'tip', x:32, y:0} ];
             if (comp.type === 'ammeter') return [
@@ -858,6 +859,8 @@ class CircuitSimulator {
                         view: this.activeExperiment !== null ? this.viewMode : 'both',
                         end: {compId: term.componentId, termId: term.terminalId}
                     });
+                    this.rememberPotContacts(this.draftWire.start);
+                    this.rememberPotContacts({compId:term.componentId,termId:term.terminalId});
                     this.wireDrawing = false; this.draftWire = null;
                     this.updateCircuitInfo();
                     this.recalc();
@@ -998,6 +1001,58 @@ class CircuitSimulator {
     }
     layoutRealCircuit(force=false) { this.layoutCircuit(force,true); }
     layoutSchematicCircuit(force=false) { this.layoutCircuit(force,false); }
+    potSymbolGeometry(comp) {
+        const fixed=this.isTerminalConnected(comp,'b')&&!this.isTerminalConnected(comp,'a')?'b':'a';
+        return {fixed,fixedX:fixed==='b'?48:-48,upperX:comp.potUpperSide===-1?-48:comp.potUpperSide===1?48:fixed==='b'?-48:48,
+            sliderX:-25+50*comp.position};
+    }
+    rememberPotContacts(endpoint) {
+        const comp=this.components.find(c=>c.id===endpoint.compId);
+        if(comp?.type!=='potentiometer')return;
+        // Only interactive schematic wiring leaves the physical contacts undecided.
+        // Existing documents and explicitly built experiments retain their exact posts.
+        if(this.viewMode==='real')comp.potContactMode='pinned';
+        else if(!comp.potContactMode)comp.potContactMode='auto';
+    }
+    optimizePotSymbolLeads(wires) {
+        for(const c of this.components.filter(c=>c.type==='potentiometer')){
+            const previous=c.potUpperSide;let best=Infinity,side=previous;
+            for(const candidate of new Set([previous??(this.potSymbolGeometry(c).upperX/48),-1,1])){
+                c.potUpperSide=candidate;this._routeKey=null;
+                // Endpoint distance alone misses the large return loops caused by
+                // an exit on the wrong side of the symbol. Compare actual routes.
+                const score=wires.every(w=>w.autoSchematic)?wires.reduce((sum,w)=>{
+                    const path=this.resolveWire(w);
+                    return sum+path.slice(1).reduce((n,p,i)=>n+Math.hypot(p.x-path[i].x,p.y-path[i].y),0)+25*path.length+(w._routeBlocked?1e6:0);
+                },0):this.passiveWiringScore(wires);
+                if(score<best-.01){best=score;side=candidate;}
+            }
+            c.potUpperSide=side;this._routeKey=null;
+        }
+    }
+    optimizePotPhysicalContacts(wires) {
+        for(const c of this.components.filter(c=>c.type==='potentiometer'&&c.potContactMode==='auto')){
+            const ends=this.wires.flatMap(w=>[w.start,w.end]).filter(e=>e.compId===c.id);
+            const lower=[...new Set(ends.filter(e=>['a','b'].includes(e.termId)).map(e=>e.termId))];
+            const upper=[...new Set(ends.filter(e=>['c','d'].includes(e.termId)).map(e=>e.termId))];
+            if(lower.length!==1||upper.length!==1)continue;
+            const original=ends.map(e=>e.termId),position=c.position;
+            let best=Infinity,chosen=[lower[0],upper[0]];
+            for(const lo of [lower[0],lower[0]==='a'?'b':'a'])for(const hi of [upper[0],upper[0]==='c'?'d':'c']){
+                ends.forEach((e,i)=>e.termId=['a','b'].includes(original[i])?lo:hi);
+                c.position=lo===lower[0]?position:1-position;
+                const routes=wires.length<=24?this.naturalWireRoutes(wires):null;
+                const score=routes?[...routes.values()].reduce((sum,p)=>sum+this.realWireScore(p),0):1e6+this.passiveWiringScore(wires);
+                if(score<best-.01){best=score;chosen=[lo,hi];}
+            }
+            ends.forEach((e,i)=>e.termId=['a','b'].includes(original[i])?chosen[0]:chosen[1]);
+            // Reversing the selected resistor half requires a complementary physical
+            // slider position to preserve its resistance. Both views now show that position.
+            c.position=chosen[0]===lower[0]?position:1-position;
+            c.potContactMode='mapped';
+            if(this.selectedComponent===c)this.updatePropertiesPanel();
+        }
+    }
     passiveWiringScore(wires) {
         const lines=wires.map(w=>({w,a:this.wireEndPos(w,'start'),b:this.wireEndPos(w,'end')}));
         let score=lines.reduce((sum,{a,b})=>sum+Math.hypot(a.x-b.x,a.y-b.y),0);
@@ -1054,7 +1109,7 @@ class CircuitSimulator {
         const signatureKey=real?'_realLayoutSignature':'_schematicLayoutSignature';
         const put=(c,x,y)=>{if(real){c.realX=x;c.realY=y;c.realFlipX=false;}else{c.x=x;c.y=y;c.schematicFlipX=false;}};
         const wires=this.activeWires().length?this.activeWires():this.wires.filter(w=>w.view!=='real');
-        const makeSignature=()=>JSON.stringify(['natural-leads-v8',this.components.map(c=>[c.id,c.type]),wires.map(w=>[w.start,w.end])]);
+        const makeSignature=()=>JSON.stringify(['two-terminal-pot-v9',this.components.map(c=>[c.id,c.type,c.potContactMode]),wires.map(w=>[w.start,w.end])]);
         const signature=makeSignature();
         if(!force&&this[signatureKey]===signature)return;
         this[signatureKey]=signature;
@@ -1168,11 +1223,15 @@ class CircuitSimulator {
             this.spaceRealComponents();
             if(battery&&this.components.length>1){const others=this.components.filter(c=>c!==battery);const p=this.componentPos(battery);put(battery,p.x,Math.min(100,...others.map(c=>this.realComponentBox(c,0).top-110)));}
         }
-        if(this.activeWires().length)this.optimizePassiveTerminals(wires);
+        if(this.activeWires().length){
+            if(real)this.optimizePotPhysicalContacts(wires);
+            this.optimizePassiveTerminals(wires);
+        }
         // Rebuild the supply-node lanes after a terminal permutation; the layout tree's old node names are stale.
         parent.clear();wires.forEach(w=>union(this.wireEndKey(w,'start'),this.wireEndKey(w,'end')));
         this.components.filter(c=>c.type==='potentiometer').forEach(c=>union(c.id+'_c',c.id+'_d'));
         if(root){const d=measure(root),positive=find(battery.id+'_pos'),negative=find(battery.id+'_neg');wires.forEach(w=>{const n=find(this.wireEndKey(w,'start'));w[real?'_realLaneX':'_schematicLaneX']=n===positive?(rightToLeft?140+d.w+65:75):n===negative?(rightToLeft?75:140+d.w+65):null;});}
+        if(!real&&this.activeWires().length)this.optimizePotSymbolLeads(wires);
         this[signatureKey]=makeSignature();
     }
 
@@ -1209,19 +1268,19 @@ class CircuitSimulator {
     potCurrentPaths(comp,view) {
         if(!this.simulationRunning)return [];
         const p=comp.position,paths=[],add=(points,current)=>{if(Math.abs(current)>1e-6)paths.push({points:current>0?points:[...points].reverse(),current:Math.abs(current)});};
-        const principle=view==='principle',real=view==='real',bOnly=this.isTerminalConnected(comp,'b')&&!this.isTerminalConnected(comp,'a');
+        const principle=view==='principle',real=view==='real';
         const left=principle?150:real?-64:-25,right=principle?450:real?64:25;
-        const fraction=!real&&!principle&&bOnly?1-p:p,x=left+(right-left)*fraction,y=principle?210:real?19:24,top=principle?55:real?-30:-28;
-        const ax=principle?80:real?-76:bOnly?48:-48,bx=principle?520:real?76:bOnly?-48:48;
+        const x=left+(right-left)*p,y=principle?210:real?19:24,top=principle?55:real?-30:-28;
+        const ax=principle?80:real?-76:-48,bx=principle?520:real?76:48;
         const resistance=(from,to)=>{const pts=[];const count=Math.max(1,Math.ceil(Math.abs(to-from)/3));for(let i=0;i<=count;i++){const xx=from+(to-from)*i/count;pts.push({x:xx,y:y+(principle?(()=>{const u=(xx-150)/12.5,k=Math.floor(u),t=u-k;return (k%2?28:-28)*t*(1-t);})():0)});}return pts;};
-        const aEdge=!real&&!principle&&bOnly?right:left,bEdge=!real&&!principle&&bOnly?left:right;
+        const aEdge=left,bEdge=right;
         add([{x:ax,y:real?24:y},{x:aEdge,y},...resistance(aEdge,x)],comp._potI1||0);
         add([{x:bx,y:real?24:y},{x:bEdge,y},...resistance(bEdge,x)],comp._potI2||0);
         const slider=(comp._potI1||0)+(comp._potI2||0);
         add([{x,y},{x,y:top}],slider);
         for(const term of ['c','d']){
             const flow=this.connectedWireTerminalFlow(comp,term);
-            const tx=principle?(term==='c'?80:520):real?(term==='c'?-112:112):48;
+            const tx=principle?(term==='c'?80:520):real?(term==='c'?-112:112):this.potSymbolGeometry(comp).upperX;
             add([{x:tx,y:top},{x,y:top}],flow);
         }
         return paths;
@@ -2271,7 +2330,7 @@ class CircuitSimulator {
 
     autoRealWirePath(w, start, end) {
         // Rebuild once per geometry change, in stable wire order. Animation reuses the routes.
-        const key=JSON.stringify([this.viewMode,this.components.map(c=>[c.id,c.type,this.componentPos(c),c.rotation,c.realRotation,c.realFlipX,c.schematicFlipX,c.voltage]),
+        const key=JSON.stringify([this.viewMode,this.components.map(c=>[c.id,c.type,this.componentPos(c),c.rotation,c.realRotation,c.realFlipX,c.schematicFlipX,c.voltage,c.potUpperSide]),
             this.activeWires().map(w=>[w.start,w.end,w.realBends,w.bends,w.autoSchematic])]);
         if(this._routeKey!==key) {
             this._routeKey=key; this._routes=new Map();
@@ -2675,17 +2734,14 @@ class CircuitSimulator {
     }
 
     drawPotentiometer(comp) {
-        const ctx=this.ctx,terms=this.terminals(comp),bOnly=this.isTerminalConnected(comp,'b')&&!this.isTerminalConnected(comp,'a');
-        const fraction=bOnly?1-comp.position:comp.position,wx=-25+50*fraction;
+        const ctx=this.ctx,{fixedX,upperX,sliderX:wx}=this.potSymbolGeometry(comp);
         ctx.strokeStyle=this.schematicInk;ctx.lineWidth=2.4;ctx.fillStyle=this.symbolFill;
         ctx.fillRect(-30,14,60,20);ctx.strokeRect(-30,14,60,20);
-        ctx.beginPath();ctx.moveTo(-48,24);ctx.lineTo(-30,24);
-        if(terms.some(t=>t.x===48&&t.y===24&&!t.hidden)){ctx.moveTo(30,24);ctx.lineTo(48,24);}
-        ctx.moveTo(48,-28);ctx.lineTo(wx,-28);ctx.lineTo(wx,5);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(fixedX,24);ctx.lineTo(Math.sign(fixedX)*30,24);
+        ctx.moveTo(upperX,-28);ctx.lineTo(wx,-28);ctx.lineTo(wx,5);ctx.stroke();
         ctx.fillStyle=this.schematicInk;ctx.beginPath();ctx.moveTo(wx,13);ctx.lineTo(wx-7,-1);ctx.lineTo(wx,3);ctx.lineTo(wx+7,-1);ctx.closePath();ctx.fill();
         this.drawPotCurrent(comp,'schematic');
         this.label(comp,'滑动变阻器',0,53,{font:'12px Microsoft YaHei'});
-        if(this.currentTool==='wire')terms.filter(t=>!t.hidden&&t.id!=='d').forEach(t=>this.label(comp,t.id.toUpperCase(),t.x,t.y+(t.y>0?17:-14),{font:'13px Georgia'}));
     }
 
     drawMeter(comp, letter) {
@@ -2849,6 +2905,7 @@ class CircuitSimulator {
     drawAllTerminals() {
         const ctx = this.ctx;
         this.components.forEach(comp => {
+            if(this.viewMode==='schematic'&&comp.type==='potentiometer'&&this.currentTool!=='wire')return;
             const drawn = new Set();
             this.getAbsoluteTerminals(comp).forEach(t => {
                 if(t.hidden)return;
