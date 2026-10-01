@@ -162,8 +162,20 @@ function buildLatestMeasurement(){
  w(b,'pos',p,'a');w(p,'c',r,'a');w(r,'a',v,'r3');w(r,'b',v,'neg');w(r,'b',a,'r0_6');w(a,'neg',l1,'shell');w(l1,'shell',l2,'shell');w(l1,'tip',l2,'tip');w(l2,'tip',s,'b');w(s,'a',b,'neg');return m;
 }
 
-for(const reverse of [false,true]){
- const m=buildLatestMeasurement();if(reverse)m.wires.reverse();
+// The annotated reference has the switch at the positive end and the meters' positive posts on the lamp side.
+// Build that circuit explicitly; layout must never silently rewire an existing circuit to achieve this appearance.
+function buildRedLineMeasurement(){
+ const m=buildLatestMeasurement();
+ for(const w of m.wires)for(const end of ['start','end']){
+  const e=w[end],c=m.components.find(c=>c.id===e.compId);
+  if(c.type==='battery')e.termId=e.termId==='pos'?'neg':'pos';
+  if(c.type==='ammeter')e.termId=e.termId==='neg'?'r0_6':'neg';
+  if(c.type==='voltmeter')e.termId=e.termId==='neg'?'r3':'neg';
+ }
+ return m;
+}
+for(const builder of [buildLatestMeasurement,buildRedLineMeasurement])for(const reverse of [false,true]){
+ const m=builder();if(reverse)m.wires.reverse();
  m.components.find(c=>c.type==='switch').state='closed';m.solveCircuit();
  const connections=JSON.stringify(m.wires.map(w=>[w.start,w.end])),before=m.components.map(c=>c.measurement||0),rotations=m.components.map(c=>c.rotation);
  for(const mode of ['real','schematic','real']){
@@ -174,12 +186,19 @@ for(const reverse of [false,true]){
    assertSafeRoutes(m);assert.equal(m._routingMode,'independent');
    const load=m.components.find(c=>c.type==='resistor'),meter=m.components.find(c=>c.type==='voltmeter');
    assert.equal(load.realX,meter.realX);assert.ok(meter.realY>load.realY);
+   const battery=m.components.find(c=>c.type==='battery'),ammeter=m.components.find(c=>c.type==='ammeter');
+   const neighbor=(c,term)=>{const w=m.wires.find(w=>['start','end'].some(end=>w[end].compId===c.id&&w[end].termId===term));return m.components.find(other=>other.id===w[w.start.compId===c.id?'end':'start'].compId);};
+   assert.ok(neighbor(battery,'pos').realX>battery.realX,'positive supply lead must feed the right side of the loop');
+   assert.ok(neighbor(battery,'neg').realX<battery.realX,'negative supply lead must return from the left side');
+   assert.ok(neighbor(ammeter,'r0_6').realX>ammeter.realX,'meter positive lead must approach from the right');
+   assert.ok(neighbor(ammeter,'neg').realX<ammeter.realX,'meter negative lead must leave towards the left');
+   assert.ok(ammeter.measurement>0&&meter.measurement>0,'meter readings must retain positive polarity');
   }else{
    assert.ok(m.schematicJunctionPoints().length>=4,'parallel branches need visible junction dots');
    for(const w of m.wires){const path=m.resolveWire(w);path.slice(1).forEach((q,i)=>assert.ok(Math.abs(q.x-path[i].x)<1e-6||Math.abs(q.y-path[i].y)<1e-6));}
   }
  }
- console.log('PASS latest resistor/voltmeter and parallel lamps, '+(reverse?'reversed':'original')+' wire order: independent curves, measured pairing, junction dots, repeat conversion and unchanged connections/readings/angles');
+ console.log('PASS '+(builder===buildRedLineMeasurement?'annotated red-line':'latest')+' resistor/voltmeter and parallel lamps, '+(reverse?'reversed':'original')+' wire order: right-to-left positive flow, independent curves, measured pairing, junction dots, repeat conversion and unchanged connections/readings/angles');
 }
 // A common electrical net must not exempt long overlapping physical leads.
 const overlap=buildLatestMeasurement();overlap.viewMode='real';overlap.layoutRealCircuit(true);

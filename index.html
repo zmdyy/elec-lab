@@ -1003,7 +1003,7 @@ class CircuitSimulator {
         const signatureKey=real?'_realLayoutSignature':'_schematicLayoutSignature';
         const put=(c,x,y)=>{if(real){c.realX=x;c.realY=y;c.realFlipX=false;}else{c.x=x;c.y=y;c.schematicFlipX=false;}};
         const wires=this.activeWires().length?this.activeWires():this.wires.filter(w=>w.view!=='real');
-        const signature=JSON.stringify(['teaching-loop-right-positive-v4',this.components.map(c=>[c.id,c.type]),wires.map(w=>[w.start,w.end])]);
+        const signature=JSON.stringify(['teaching-loop-right-positive-v5',this.components.map(c=>[c.id,c.type]),wires.map(w=>[w.start,w.end])]);
         if(!force&&this[signatureKey]===signature)return;
         this[signatureKey]=signature;
         const parent=new Map(),find=k=>{if(!parent.has(k))parent.set(k,k);let r=k;while(parent.get(r)!==r)r=parent.get(r);return r;};
@@ -1066,12 +1066,13 @@ class CircuitSimulator {
         if(root){
             const d=measure(root);
             if(real){
-                // Follow the ordered series stages around a broad loop. Parallel groups stay together.
+                // Start at the right positive supply post, then follow the loop right to left.
+                // This puts an upright meter's positive lead towards the preceding stage and its negative lead towards the next.
                 const stages=[],collect=(e,from)=>{if(e.kind!=='series'){stages.push({e,from});return;}let node=from;for(const child of from===e.u?e.children:[...e.children].reverse()){collect(child,node);node=child.u===node?child.v:child.u;}};
                 collect(root,source);
                 const stageWidth=Math.max(1100,(stages.length-1)*340);
                 const arrange=(e,from,x,y)=>{
-                    if(e.kind==='leaf'){put(e.comp,x+(e.comp.type==='ammeter'?80:0),y);placed.add(e.comp.id);return;}
+                    if(e.kind==='leaf'){put(e.comp,x,y);placed.add(e.comp.id);return;}
                     if(e.kind==='parallel'){
                         // Keep a voltmeter below its directly measured load.
                         const hasMeter=c=>c.kind==='leaf'&&c.comp.type==='voltmeter';
@@ -1083,7 +1084,7 @@ class CircuitSimulator {
                     const children=from===e.u?e.children:[...e.children].reverse();let node=from;
                     children.forEach((child,i)=>{arrange(child,node,x+((children.length-1)/2-i)*260,y);node=child.u===node?child.v:child.u;});
                 };
-                stages.forEach(({e,from},i)=>{const t=stages.length===1?.5:i/(stages.length-1);arrange(e,from,440+(1-Math.cos(Math.PI*t))*stageWidth/2,140+340*Math.sin(Math.PI*t));});
+                stages.forEach(({e,from},i)=>{const t=stages.length===1?.5:i/(stages.length-1);arrange(e,from,440+(1+Math.cos(Math.PI*t))*stageWidth/2,140+340*Math.sin(Math.PI*t));});
                 put(battery,440+stageWidth/2,100);placed.add(battery.id);
             }else place(root,source,140,280);
             if(!real){put(battery,140+d.w/2,110);placed.add(battery.id);}
@@ -1981,7 +1982,7 @@ class CircuitSimulator {
 
     // Physical leads are separate wires, even on the same electrical node.
     // Shared binding posts only allow convergence within 24 px; other wires are hard obstacles.
-    independentWireRoutes(wires, fanMask=0) {
+    independentWireRoutes(wires, fanMask=0, measuredLoops=true) {
         const boxes=this.components.map(c=>this.realComponentBox(c,16));
         const leads=new Map(),routes=new Map();
         const keys=[...new Set(wires.flatMap(w=>['start','end'].map(e=>this.wireEndKey(w,e))))].filter(key=>key&&wires.filter(w=>['start','end'].some(e=>this.wireEndKey(w,e)===key)).length>1).sort();
@@ -1998,12 +1999,9 @@ class CircuitSimulator {
             const q={x:p.x+dx*distance-dy*offset,y:p.y+dy*distance+dx*offset};
             const comp=this.components.find(c=>c.id===e.compId),cp=comp?this.componentPos(comp):p;
             let points=[p,q];
-            if(comp?.type==='battery'&&attached.length===1&&comp.voltage<=3&&e.termId==='neg'&&this.componentAngle(comp)===0){
-                const top=Math.min(...boxes.map(b=>b.top))-120;points=[p,q,{x:q.x,y:top}];
-                if(points.slice(1).some((b,i)=>boxes.some(box=>box.comp!==comp&&this.segmentIntersectsBox(points[i],b,box))))points=[p,q];
-            }
             if(comp?.type==='ammeter'&&attached.length===1&&this.componentAngle(comp)===0){
-                points=e.termId==='neg'?[p,q,{x:cp.x-115,y:q.y},{x:cp.x-115,y:cp.y-150}]:[p,{x:q.x,y:cp.y+220}];
+                const side=e.termId==='neg'?-1:1;
+                points=[p,q,{x:cp.x+side*115,y:q.y}];
                 if(points.slice(1).some((b,i)=>boxes.some(box=>box.comp!==comp&&this.segmentIntersectsBox(points[i],b,box))))points=[p,q];
             }
             lead[end]={p,q:points.at(-1),points};
@@ -2039,7 +2037,7 @@ class CircuitSimulator {
             const path=[];for(let i=1;i>=0;i=prev[i])path.push(vertices[i]);path.reverse();return [...own.start.points.slice(0,-1),...path,...own.end.points.slice(0,-1).reverse()];
         };
         const seeds=new Map(wires.filter(w=>w.realBends?.length).map(w=>[w,[this.wireEndPos(w,'start'),...w.realBends,this.wireEndPos(w,'end')]]));
-        for(const meter of this.components.filter(c=>c.type==='voltmeter')){
+        for(const meter of this.components.filter(c=>measuredLoops&&c.type==='voltmeter')){
             const meterWires=wires.filter(w=>['start','end'].some(e=>w[e].compId===meter.id));
             if(meterWires.length!==2)continue;
             const far=meterWires.map(w=>w[w.start.compId===meter.id?'end':'start']);
@@ -2048,12 +2046,16 @@ class CircuitSimulator {
             const mp=this.componentPos(meter),rp=this.componentPos(load);
             if(mp.y-rp.y<170||Math.abs(mp.x-rp.x)>40||this.componentAngle(load)!==0||this.componentAngle(meter)!==0)continue;
             const left=far.map(e=>this.terminalPos(e.compId,e.termId)).sort((a,b)=>a.x-b.x)[0];
+            const leftMeter=Math.min(...meterWires.map(w=>{const e=w[w.start.compId===meter.id?'start':'end'];return this.terminalPos(e.compId,e.termId).x;}));
             for(const w of meterWires){
                 if(seeds.has(w))continue;
                 const loadEnd=w.start.compId===load.id?'start':'end',meterEnd=loadEnd==='start'?'end':'start',l=leads.get(w)[loadEnd],v=leads.get(w)[meterEnd];
                 const outer=l.p.x===left.x;
                 const x=mp.x-(outer?190:110),y=mp.y+(outer?190:150);
-                let path=outer?[l.p,l.q,{x,y:rp.y+70},{x,y},{x:v.q.x,y},v.q,v.p]:[l.p,l.q,{x:l.q.x+30,y:rp.y+75},{x,y:rp.y+125},{x,y},v.q,v.p];
+                let path;
+                const paired=outer?(v.p.x===leftMeter):(v.p.x!==leftMeter);
+                if(paired){const xx=mp.x+(outer?-115:115),yy=mp.y+110;path=[l.p,l.q,{x:xx,y:rp.y+70},{x:xx,y:yy},{x:v.q.x,y:yy},v.q,v.p];}
+                else path=outer?[l.p,l.q,{x,y:rp.y+70},{x,y},{x:v.q.x,y},v.q,v.p]:[l.p,l.q,{x:l.q.x+30,y:rp.y+75},{x,y:rp.y+125},{x,y},v.q,v.p];
                 if(loadEnd==='end')path.reverse();seeds.set(w,path);
             }
         }
@@ -2082,8 +2084,8 @@ class CircuitSimulator {
             this.components.filter(c=>c.type==='potentiometer').forEach(c=>roots.set(find(c.id+'_c'),find(c.id+'_d')));
             this.activeWires().forEach(w=>{w._routeNet=find(this.wireEndKey(w,'start'));});
             if(this.viewMode==='real'&&this.activeWires().length<=24){
-                for(const fanMask of [0,1,2,3]){
-                    const independent=this.independentWireRoutes(this.activeWires(),fanMask);
+                for(const attempt of [0,1,2,3,4,5,6,7]){
+                    const independent=this.independentWireRoutes(this.activeWires(),attempt%4,attempt<4);
                     if(independent){this._routes=this.smoothIndependentRoutes(independent);this._routingMode='independent';this.activeWires().forEach(w=>w._routeBlocked=false);return this._routes.get(w)||[start,end];}
                 }
             }
