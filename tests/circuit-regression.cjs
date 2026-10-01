@@ -399,3 +399,53 @@ leadPot.x=400;leadPot.y=400;far.x=50;far.y=340;leadChoice.optimizePotSymbolLeads
 leadPot.potUpperSide=1;
 assert.equal(leadChoice.potSymbolGeometry(leadPot).upperX,48);
 console.log('PASS slider lead can exit left or right to shorten schematic wiring without changing physical contacts');
+
+function buildMultiVoltage(){
+ const m=build(0);m.components=[];m.wires=[];m.idCounter=0;
+ const b=m.createComponent('battery',{voltage:3}),s=m.createComponent('switch',{state:'closed'}),l1=m.createComponent('bulb',{label:'L1'}),l2=m.createComponent('bulb',{label:'L2'});
+ const v1=m.createComponent('voltmeter',{label:'V1'}),v2=m.createComponent('voltmeter',{label:'V2'}),v=m.createComponent('voltmeter',{label:'V'});
+ const wire=(a,ta,b,tb)=>m.connectTerminals(a,ta,b,tb,[],'both');
+ wire(b,'pos',s,'b');wire(s,'a',l1,'tip');wire(l1,'shell',l2,'tip');wire(l2,'shell',b,'neg');
+ wire(v1,'r3',l1,'tip');wire(v1,'neg',l1,'shell');wire(v2,'r3',l2,'tip');wire(v2,'neg',l2,'shell');
+ wire(v,'r3',l1,'tip');wire(v,'neg',l2,'shell');return m;
+}
+
+for(const [name,builder] of [['series',()=>build(0)],['parallel',()=>build(1)],['ohm',()=>build(2)],['dimmer',()=>build(3)],['multi-voltage',buildMultiVoltage]]){
+ const m=builder();m.components.find(c=>c.type==='switch').state='closed';m.solveCircuit();
+ const wiring=JSON.stringify(m.wires.map(w=>[w.start,w.end])),readings=m.components.map(c=>c.measurement||0),angles=JSON.stringify(m.components.map(c=>[c.rotation,c.realRotation]));
+ m.layoutSchematicCircuit(true);m.solveCircuit();assertEquivalentConnections(m,wiring);
+ assert.equal(JSON.stringify(m.components.map(c=>[c.rotation,c.realRotation])),angles,'symbol lead adaptation must preserve real/user rotations');
+ m.components.forEach((c,i)=>assert.ok(Math.abs((c.measurement||0)-readings[i])<1e-6));
+ const b=m.components.find(c=>c.type==='battery'),s=m.components.find(c=>c.type==='switch');
+ assert.equal(s.y,b.y);assert.ok(Math.abs(s.x-b.x)<=160.01,'main switch next to source');
+ assert.equal(m.componentSize(b),1.3);assert.ok(m._schematicFrame.right-m._schematicFrame.left<=1050,'compact horizontal span');
+ assert.ok(m._schematicFrame.bottom-m._schematicFrame.top>=450);
+ const resolve=m.resolveRealWire,sample=m.sampleRealWirePath;m.resolveRealWire=m.resolveWire;m.sampleRealWirePath=p=>p;assertSafeRoutes(m);
+ for(const w of m.wires){const p=m.resolveWire(w);p.slice(1).forEach((q,i)=>assert.ok(Math.abs(q.x-p[i].x)<1e-6||Math.abs(q.y-p[i].y)<1e-6));}
+ m.resolveRealWire=resolve;m.sampleRealWirePath=sample;
+ if(name==='series'){const a=m.components.filter(c=>c.type==='ammeter');assert.equal(a.filter(c=>[90,270].includes(m.componentAngle(c))).length,2);
+  for(const c of a.filter(c=>c.schematicRotation!==undefined)){assert.ok([m._schematicFrame.left,m._schematicFrame.right].includes(c.x));
+   const t=m.getAbsoluteTerminals(c),pos=t.find(t=>t.terminalId==='r0_6'),neg=t.find(t=>t.terminalId==='neg');assert.ok(Math.abs(pos.x-neg.x)<1e-6);}
+ }
+ if(name==='ohm'||name==='dimmer'){
+  const pot=m.components.find(c=>c.type==='potentiometer'),rod=m.wires.find(w=>['start','end'].some(e=>w[e].compId===pot.id&&['c','d'].includes(w[e].termId)));
+  const points=m.resolveWire(rod);assert.ok(points.length<=5,'slider input should avoid large folded leads');
+ }
+ if(name==='multi-voltage'){
+  const v=m.components.find(c=>c.label==='V'),locals=m.components.filter(c=>['V1','V2'].includes(c.label));
+  assert.ok(locals.every(c=>v.y<c.y-100),'total voltage on a separate layer above local measurements');
+  assert.ok(Math.abs(v.measurement-locals.reduce((sum,c)=>sum+c.measurement,0))<1e-5);
+ }
+ m.canvas={width:1440,height:850};m.fitView(20);assert.ok(m.componentSize(b)*m.scale>=.9,'large symbols remain legible after fitting');
+ if(name==='multi-voltage'){
+  m.viewMode='real';m.layoutRealCircuit(true);m.solveCircuit();assertEquivalentConnections(m,wiring);assertSafeRoutes(m);
+  m.components.forEach((c,i)=>assert.ok(Math.abs((c.measurement||0)-readings[i])<1e-6));
+  const v=m.components.find(c=>c.label==='V'),locals=m.components.filter(c=>['V1','V2'].includes(c.label));
+  assert.ok(locals.every(c=>m.realComponentBox(v,0).bottom<m.realComponentBox(c,0).top),'physical total voltmeter above the local meter layer');
+ }
+ console.log('PASS classroom frame '+name+': nearby source/switch, compact proportions, large fitted symbols, clear orthogonal wires and unchanged nodes/readings');
+}
+
+const vertical=build(0);vertical.layoutSchematicCircuit(true);vertical.selectedComponent=vertical.components.find(c=>c.schematicRotation===270);
+vertical.rotateSelected();assert.equal(vertical.componentAngle(vertical.selectedComponent),0,'manual rotation starts from displayed symbol orientation');
+console.log('PASS manual symbol rotation overrides automatic vertical meter leads');
