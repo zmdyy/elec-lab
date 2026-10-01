@@ -8,11 +8,28 @@ vm.createContext(sandbox);vm.runInContext(code+'\nthis.Simulator=CircuitSimulato
 function build(index){const s=Object.create(sandbox.Simulator.prototype);Object.assign(s,{components:[],wires:[],idCounter:0,viewMode:'schematic',simulationRunning:true});
 for(const name of ['draw','saveUndo','updatePropertiesPanel','updateCircuitInfo','recalc'])s[name]=()=>{};
 sandbox.experiments[index].build(s);s.wires.forEach(w=>w.view='both');return s;}
+
+function assertEquivalentConnections(m,saved){
+ const fingerprint=rows=>{
+  const parent=new Map(),find=k=>{if(!parent.has(k))parent.set(k,k);while(parent.get(k)!==k)k=parent.get(k);return k;};
+  for(const c of m.components)for(const t of m.terminals(c))find(c.id+'_'+t.id);
+  for(const ends of rows){const a=ends[0].compId+'_'+ends[0].termId,b=ends[1].compId+'_'+ends[1].termId;parent.set(find(a),find(b));}
+  const nodes=new Map();for(const c of m.components)for(const t of m.terminals(c)){
+   const node=find(c.id+'_'+t.id);if(!nodes.has(node))nodes.set(node,[]);
+   const passive=['bulb','resistor','switch'].includes(c.type);nodes.get(node).push(c.id+'_'+(passive?'passive':t.id));
+  }
+  return JSON.stringify([...nodes.values()].map(a=>a.sort().join('|')).sort());
+ };
+ assert.equal(m.wires.length,JSON.parse(saved).length,'optimization must not remove or add wires');
+ assert.equal(fingerprint(m.wires.map(w=>[w.start,w.end])),fingerprint(JSON.parse(saved)),
+  'electrical nodes must retain every source/meter/rheostat post, allowing symmetric passive ends and junction relocation within the same node');
+}
+
 for(let index=0;index<4;index++){
  const s=build(index);if(index===2)s.components.find(c=>c.type==='switch').state='closed';
  s.solveCircuit();const before=s.components.map(c=>c.measurement||0),topology=JSON.stringify(s.wires.map(w=>[w.start,w.end])),positions=JSON.stringify(s.components.map(c=>[c.x,c.y]));
  s.viewMode='real';s.layoutRealCircuit(true);s.solveCircuit();
- assert.equal(JSON.stringify(s.wires.map(w=>[w.start,w.end])),topology);
+ assertEquivalentConnections(s,topology);
  assert.equal(JSON.stringify(s.components.map(c=>[c.x,c.y])),positions);
  // Solver regularization depends on ground-node ordering: allow < 1 micro-unit numerical drift.
  s.components.forEach((c,i)=>assert.ok(Math.abs((c.measurement||0)-before[i])<1e-6,'conversion changed reading'));
@@ -94,10 +111,10 @@ for(let fixture=0;fixture<5;fixture++)for(const reverse of [false,true]){
  const m=fixture===4?buildUserMixed():build(fixture);if(reverse)m.wires.reverse();
  m.solveCircuit();const before=m.components.map(c=>c.measurement||0),connections=JSON.stringify(m.wires.map(w=>[w.start,w.end])),schematic=JSON.stringify(m.components.map(c=>[c.x,c.y,c.rotation]));
  m.viewMode='real';m.layoutRealCircuit(true);m.solveCircuit();
- assert.equal(m._realLayoutKind,'series-parallel');assert.equal(JSON.stringify(m.wires.map(w=>[w.start,w.end])),connections);assert.equal(JSON.stringify(m.components.map(c=>[c.x,c.y,c.rotation])),schematic);
+ assert.equal(m._realLayoutKind,'series-parallel');assertEquivalentConnections(m,connections);assert.equal(JSON.stringify(m.components.map(c=>[c.x,c.y,c.rotation])),schematic);
  m.components.forEach((c,i)=>assert.ok(Math.abs((c.measurement||0)-before[i])<1e-6));assertSafeRoutes(m);
  const real=JSON.stringify(m.components.map(c=>[c.realX,c.realY,c.realFlipX]));m.layoutRealCircuit();assert.equal(JSON.stringify(m.components.map(c=>[c.realX,c.realY,c.realFlipX])),real,'unchanged circuit must not jump on repeated view changes');
- console.log(`PASS physical layout fixture ${fixture+1}, ${reverse?'reversed':'original'} wire order: no crossing, no face coverage, unchanged topology/readings`);
+ console.log(`PASS physical layout fixture ${fixture+1}, ${reverse?'reversed':'original'} wire order: no crossing, no face coverage, equivalent topology/unchanged readings`);
 }
 const reorganized=buildUserMixed();reorganized.viewMode='real';reorganized.layoutRealCircuit(true);
 const frozenPath=reorganized.wires[0];frozenPath.realBends=[{x:500,y:400}];reorganized.layoutRealCircuit(true);assert.equal(frozenPath.realBends,null);assertSafeRoutes(reorganized);
@@ -108,13 +125,13 @@ for(let fixture=0;fixture<5;fixture++)for(const reverse of [false,true]){
  m.viewMode='real';m.layoutRealCircuit(true);m.solveCircuit();
  const readings=m.components.map(c=>c.measurement||0),ends=JSON.stringify(m.wires.map(w=>[w.start,w.end])),real=JSON.stringify(m.components.map(c=>[c.realX,c.realY,c.realFlipX]));
  m.viewMode='schematic';m.layoutSchematicCircuit(true);m.solveCircuit();
- assert.equal(JSON.stringify(m.wires.map(w=>[w.start,w.end])),ends);assert.equal(JSON.stringify(m.components.map(c=>[c.realX,c.realY,c.realFlipX])),real);
+ assertEquivalentConnections(m,ends);assert.equal(JSON.stringify(m.components.map(c=>[c.realX,c.realY,c.realFlipX])),real);
  m.components.forEach((c,i)=>assert.ok(Math.abs((c.measurement||0)-readings[i])<1e-6));
  // Reuse clearance/crossing checks with unsmoothed schematic polylines.
  m.resolveRealWire=m.resolveWire;m.sampleRealWirePath=p=>p;assertSafeRoutes(m);
  for(const w of m.wires){const p=m.resolveWire(w);for(let i=1;i<p.length;i++)assert.ok(Math.abs(p[i].x-p[i-1].x)<1e-6||Math.abs(p[i].y-p[i-1].y)<1e-6,'schematic segment must be orthogonal');}
  const geometry=JSON.stringify(m.components.map(c=>[c.x,c.y,c.schematicFlipX]));m.layoutSchematicCircuit();assert.equal(JSON.stringify(m.components.map(c=>[c.x,c.y,c.schematicFlipX])),geometry);
- console.log(`PASS schematic layout fixture ${fixture+1}, ${reverse?'reversed':'original'}: orthogonal, clear, unchanged topology/readings`);
+ console.log(`PASS schematic layout fixture ${fixture+1}, ${reverse?'reversed':'original'}: orthogonal, clear, equivalent topology/unchanged readings`);
 }
 
 // All four rheostat contacts, both polarities, and the unused coil portion.
@@ -163,7 +180,7 @@ function buildLatestMeasurement(){
 }
 
 // The annotated reference has the switch at the positive end and the meters' positive posts on the lamp side.
-// Build that circuit explicitly; layout must never silently rewire an existing circuit to achieve this appearance.
+// Build that polarity explicitly; equivalent passive wiring must preserve these meter/source posts.
 function buildRedLineMeasurement(){
  const m=buildLatestMeasurement();
  for(const w of m.wires)for(const end of ['start','end']){
@@ -180,12 +197,12 @@ for(const builder of [buildLatestMeasurement,buildRedLineMeasurement])for(const 
  const connections=JSON.stringify(m.wires.map(w=>[w.start,w.end])),before=m.components.map(c=>c.measurement||0),rotations=m.components.map(c=>c.rotation);
  for(const mode of ['real','schematic','real']){
   m.viewMode=mode;m.layoutCircuit(true,mode==='real');m.solveCircuit();
-  assert.equal(JSON.stringify(m.wires.map(w=>[w.start,w.end])),connections);
+  assertEquivalentConnections(m,connections);
   m.components.forEach((c,i)=>{assert.equal(c.rotation,rotations[i]);assert.equal(m.componentAngle(c),rotations[i]);assert.ok(Math.abs((c.measurement||0)-before[i])<1e-6);});
   if(mode==='real'){
    assertSafeRoutes(m);assert.equal(m._routingMode,'independent');
    const load=m.components.find(c=>c.type==='resistor'),meter=m.components.find(c=>c.type==='voltmeter');
-   assert.equal(load.realX,meter.realX);assert.ok(meter.realY>load.realY);
+   assert.equal(load.realX,meter.realX);assert.ok(meter.realY<load.realY);
    const battery=m.components.find(c=>c.type==='battery'),ammeter=m.components.find(c=>c.type==='ammeter');
    const neighbor=(c,term)=>{const w=m.wires.find(w=>['start','end'].some(end=>w[end].compId===c.id&&w[end].termId===term));return m.components.find(other=>other.id===w[w.start.compId===c.id?'end':'start'].compId);};
    assert.ok(neighbor(battery,'pos').realX>battery.realX,'positive supply lead must feed the right side of the loop');
@@ -194,11 +211,16 @@ for(const builder of [buildLatestMeasurement,buildRedLineMeasurement])for(const 
    assert.ok(neighbor(ammeter,'neg').realX<ammeter.realX,'meter negative lead must leave towards the left');
    assert.ok(ammeter.measurement>0&&meter.measurement>0,'meter readings must retain positive polarity');
   }else{
+   const resolve=m.resolveRealWire,sample=m.sampleRealWirePath;
+   m.resolveRealWire=m.resolveWire;m.sampleRealWirePath=p=>p;assertSafeRoutes(m);
+   m.resolveRealWire=resolve;m.sampleRealWirePath=sample;
+   const load=m.components.find(c=>c.type==='resistor'),meter=m.components.find(c=>c.type==='voltmeter');
+   assert.equal(load.x,meter.x);assert.ok(meter.y<load.y);
    assert.ok(m.schematicJunctionPoints().length>=4,'parallel branches need visible junction dots');
    for(const w of m.wires){const path=m.resolveWire(w);path.slice(1).forEach((q,i)=>assert.ok(Math.abs(q.x-path[i].x)<1e-6||Math.abs(q.y-path[i].y)<1e-6));}
   }
  }
- console.log('PASS '+(builder===buildRedLineMeasurement?'annotated red-line':'latest')+' resistor/voltmeter and parallel lamps, '+(reverse?'reversed':'original')+' wire order: right-to-left positive flow, independent curves, measured pairing, junction dots, repeat conversion and unchanged connections/readings/angles');
+ console.log('PASS '+(builder===buildRedLineMeasurement?'annotated red-line':'latest')+' resistor/voltmeter and parallel lamps, '+(reverse?'reversed':'original')+' wire order: right-to-left positive flow, independent curves, measured pairing, junction dots, repeat conversion and equivalent connections/unchanged readings/angles');
 }
 // A common electrical net must not exempt long overlapping physical leads.
 const overlap=buildLatestMeasurement();overlap.viewMode='real';overlap.layoutRealCircuit(true);
@@ -224,3 +246,42 @@ for(const builder of [()=>build(0),()=>build(1),()=>build(2),()=>build(3),buildU
  assert.ok(width<=1300,'these teaching fixtures must fit a compact component footprint');
 }
 console.log('PASS eight compact physical layouts: balanced proportions and bounded horizontal span');
+
+// Electrical equivalence must reject moving a split past a zero-ohm ammeter.
+const movedSplit=build(1),splitBefore=JSON.stringify(movedSplit.wires.map(w=>[w.start,w.end]));
+const mainMeter=movedSplit.components.find(c=>c.type==='ammeter');
+const branchLead=movedSplit.wires.find(w=>['start','end'].some(e=>w[e].compId===mainMeter.id&&w[e].termId==='neg'));
+for(const e of ['start','end'])if(branchLead[e].compId===mainMeter.id)branchLead[e].termId='r0_6';
+assert.throws(()=>assertEquivalentConnections(movedSplit,splitBefore),/electrical nodes/);
+console.log('PASS equivalence guard rejects moving a branch point across an ammeter');
+
+// Changing views may swap symmetric passive ends, but never the chosen rheostat posts.
+for(const lower of ['a','b'])for(const upper of ['c','d']){
+ const m=build(3),pot=m.components.find(c=>c.type==='potentiometer');
+ for(const w of m.wires)for(const e of ['start','end'])if(w[e].compId===pot.id)w[e].termId=['a','b'].includes(w[e].termId)?lower:upper;
+ const saved=JSON.stringify(m.wires.map(w=>[w.start,w.end]));
+ const posts=()=>m.wires.flatMap(w=>[w.start,w.end]).filter(e=>e.compId===pot.id).map(e=>e.termId).sort();
+ for(const mode of ['real','schematic','real']){
+  m.viewMode=mode;m.layoutCircuit(true,mode==='real');m.solveCircuit();assertEquivalentConnections(m,saved);
+  assert.deepEqual(posts(),[lower,upper]);
+  for(const view of ['real','schematic','principle'])assert.equal(m.potCurrentPaths(pot,view).length,3);
+ }
+}
+console.log('PASS all four rheostat contact combinations retain selected posts and live paths through repeat conversion');
+
+// Prefer the near binding post on a direct-wire node, without crossing any component internally.
+const near=buildLatestMeasurement();near.components.find(c=>c.type==='switch').state='closed';near.viewMode='real';near.layoutRealCircuit(true);
+const lineLength=()=>near.wires.reduce((sum,w)=>{const a=near.wireEndPos(w,'start'),b=near.wireEndPos(w,'end');return sum+Math.hypot(a.x-b.x,a.y-b.y);},0);
+// Restore the deliberately long original passive wiring at the optimized positions.
+const original=buildLatestMeasurement();near.wires.forEach((w,i)=>{w.start={...original.wires[i].start};w.end={...original.wires[i].end};});
+const equivalent=JSON.stringify(near.wires.map(w=>[w.start,w.end])),longLength=lineLength();
+near.optimizePassiveTerminals(near.wires);assertEquivalentConnections(near,equivalent);
+assert.ok(lineLength()<longLength-100,'equivalent binding posts should shorten this annotated circuit');
+near.solveCircuit();assert.ok(near.components.filter(c=>['ammeter','voltmeter'].includes(c.type)).every(c=>c.measurement>0));
+for(const mode of ['schematic','real']){
+ near.viewMode=mode;for(const type of ['ammeter','voltmeter']){
+  const meter=near.components.find(c=>c.type===type),posts=near.terminals(meter);
+  assert.ok(posts.find(t=>t.id==='neg').x<posts.find(t=>t.id=== (type==='ammeter'?'r0_6':'r3')).x);
+ }
+}
+console.log('PASS shorter equivalent passive wiring and consistent left-negative/right-positive meter posts');
