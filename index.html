@@ -72,7 +72,7 @@
     .menu-wrap { position: relative; }
     .menu-dropdown {
         position: absolute; top: 110%; left: 0; background: #fff; border-radius: 6px;
-        box-shadow: 0 6px 20px rgba(0,0,0,.25); overflow: hidden; min-width: 230px;
+        box-shadow: 0 6px 20px rgba(0,0,0,.25); overflow-y: auto; max-height: min(70vh, 620px); min-width: 290px;
         display: none; z-index: 50;
     }
     .menu-dropdown.show { display: block; }
@@ -81,6 +81,15 @@
     }
     .menu-dropdown div:hover { background: #eaf4fb; }
     .menu-dropdown div small { display: block; color: #7f8c8d; font-size: 11px; }
+
+    #exp-menu .exp-group { padding: 7px 14px; font-size: 12px; font-weight: 700; background: #ecf0f1; color: #526779; }
+    #exp-menu button { display: block; width: 100%; border: 0; border-bottom: 1px solid #eee; background: transparent; padding: 10px 14px; text-align: left; font: inherit; font-size: 13px; color: #2c3e50; cursor: pointer; }
+    #exp-menu button:hover, #exp-menu button:focus-visible { background: #eaf4fb; }
+    #exp-menu button small { display: block; color: #657684; font-size: 11px; margin-top: 3px; }
+    body.dark #exp-menu .exp-group { background: #334155; color: #cbd5e1; }
+    body.dark #exp-menu button { color: #e2e8f0; border-color: #334155; }
+    body.dark #exp-menu button small { color: #bac8d8; }
+    body.dark #exp-menu button:hover, body.dark #exp-menu button:focus-visible { background: #334155; }
 
     /* ===== 画布 ===== */
     .canvas-container { flex: 1; min-height: 0; position: relative; background: #fbfcfd; overflow: hidden; }
@@ -1165,7 +1174,7 @@ class CircuitSimulator {
         const signatureKey=real?'_realLayoutSignature':'_schematicLayoutSignature';
         const put=(c,x,y)=>{if(real){c.realX=x;c.realY=y;c.realFlipX=false;}else{c.x=x;c.y=y;c.schematicFlipX=false;}};
         const wires=this.activeWires().length?this.activeWires():this.wires.filter(w=>w.view!=='real');
-        const makeSignature=()=>JSON.stringify(['classroom-frame-v10',this.components.map(c=>[c.id,c.type,c.potContactMode]),wires.map(w=>[w.start,w.end])]);
+        const makeSignature=()=>JSON.stringify(['classroom-frame-v11',this.components.map(c=>[c.id,c.type,c.potContactMode]),wires.map(w=>[w.start,w.end])]);
         const signature=makeSignature();
         if(!force&&this[signatureKey]===signature)return;
         this[signatureKey]=signature;
@@ -1183,6 +1192,21 @@ class CircuitSimulator {
             const [[u,tu],[v,tv]]=[...groups];edges.push({kind:'leaf',u,v,comp:c,ports:{[u]:tu,[v]:tv}});
         }
         const source=battery?find(battery.id+'_pos'):null,target=battery?find(battery.id+'_neg'):null;
+        const sourceMeters=edges.filter(e=>e.comp?.type==='voltmeter'&&
+            wires.filter(w=>[w.start.compId,w.end.compId].includes(e.comp.id)).every(w=>
+                (w.start.compId===e.comp.id?w.end.compId:w.start.compId)===battery?.id));
+        edges=edges.filter(e=>!sourceMeters.includes(e));
+        // Direct leads identify the measured object even when several loads share
+        // the same pair of electrical nodes. Pair each local voltmeter before reduction.
+        for(const meter of [...edges].filter(e=>e.comp?.type==='voltmeter')){
+            const leads=wires.filter(w=>[w.start.compId,w.end.compId].includes(meter.comp.id));
+            const owners=leads.map(w=>w.start.compId===meter.comp.id?w.end.compId:w.start.compId);
+            if(owners.length!==2||owners[0]!==owners[1])continue;
+            const load=edges.find(e=>e.comp?.id===owners[0]&&e.comp.type!=='voltmeter');
+            if(!load||!((load.u===meter.u&&load.v===meter.v)||(load.u===meter.v&&load.v===meter.u)))continue;
+            edges=edges.filter(e=>e!==load&&e!==meter);
+            edges.push({kind:'parallel',u:load.u,v:load.v,children:[load,meter]});
+        }
         // Series/parallel reduction preserves the full component order, including voltmeter branches.
         for(let pass=0;pass<this.components.length*3;pass++){
             let changed=false;
@@ -1236,7 +1260,7 @@ class CircuitSimulator {
                             children.filter(hasMeter).forEach((child,i)=>arrange(child,from,x,upper-i*260));return;
                         }
                         const hasA=c=>c.kind==='leaf'?c.comp.type==='ammeter':c.children.some(hasA);
-                        const gap=children.some(hasA)?330:260;
+                        const gap=Math.max(children.some(hasA)?330:260,...loads.map(c=>measure(c).h+70));
                         // A measurement pair keeps its load on the loop; other parallel groups straddle it.
                         // This prevents the lower branch from crowding the next series meter's lead corridor.
                         const top=children.some(hasMeter)?y-(children.length-1)*gap:y-(children.length-1)*gap/2;
@@ -1274,7 +1298,7 @@ class CircuitSimulator {
                     if(e.kind==='leaf')return 0;
                     if(e.kind==='series')return Math.max(...e.children.map(depth));
                     const meters=e.children.filter(c=>c.kind==='leaf'&&c.comp.type==='voltmeter'),loads=e.children.filter(c=>!meters.includes(c));
-                    return Math.max(0,...loads.map(depth))+Math.max(0,loads.length-1)*220+meters.length*190;
+                    return loads.reduce((sum,c)=>sum+depth(c),0)+Math.max(0,loads.length-1)*220+meters.length*190;
                 };
                 const height=Math.max(450,...stages.map(s=>depth(s.e)+160)),bottom=top+height;
                 const block=(e,from,x,y)=>{
@@ -1286,7 +1310,9 @@ class CircuitSimulator {
                     if(e.kind==='parallel'){
                         const isV=e=>e.kind==='leaf'&&e.comp.type==='voltmeter';
                         const meters=e.children.filter(isV),loads=e.children.filter(c=>!isV(c));
-                        const boxes=loads.map((child,i)=>{const d=measure(child);return block(child,from,x+(size.w-d.w)/2,y+(i-(loads.length-1)/2)*220);});
+                        let level=y;const levels=loads.map(()=>0);
+                        for(let i=loads.length-1;i>=0;i--){levels[i]=level;level-=depth(loads[i])+220;}
+                        const boxes=loads.map((child,i)=>{const d=measure(child);return block(child,from,x+(size.w-d.w)/2,levels[i]);});
                         const upper=boxes.length?Math.min(...boxes.map(b=>b.top))-120:y;
                         meters.forEach((child,i)=>{const d=measure(child);boxes.push(block(child,from,x+(size.w-d.w)/2,upper-i*190));});return combine(boxes);
                     }
@@ -1312,14 +1338,16 @@ class CircuitSimulator {
             wires.forEach(w=>{w[real?'_realLaneX':'_schematicLaneX']=null;});
             this._realLayoutKind='general';
         }
+        sourceMeters.forEach((e,i)=>{const p=this.componentPos(battery);put(e.comp,p.x,p.y-240-i*260);placed.add(e.comp.id);});
         const remaining=this.components.filter(c=>!placed.has(c.id));
         const bottom=Math.max(100,...this.components.filter(c=>placed.has(c.id)).map(c=>this.componentPos(c).y+200));
         remaining.forEach((c,i)=>{put(c,160+i*300,bottom);});
         // Old physical control points belong to the old placement and cannot safely be reused.
         wires.forEach(w=>{if(real)w.realBends=null;else{w.bends=[];w.autoSchematic=true;}});this._routeKey=null;if(real){
             this.spaceRealComponents();
-            if(battery&&this.components.length>1){const others=this.components.filter(c=>c!==battery);const p=this.componentPos(battery);put(battery,p.x,Math.min(100,...others.map(c=>this.realComponentBox(c,0).top-110)));}
+            if(battery&&this.components.length>1){const others=this.components.filter(c=>c!==battery&&!sourceMeters.some(e=>e.comp===c));const p=this.componentPos(battery);put(battery,p.x,Math.min(100,...others.map(c=>this.realComponentBox(c,0).top-110)));}
         }
+        sourceMeters.forEach((e,i)=>{const p=this.componentPos(battery);put(e.comp,p.x,p.y-240-i*260);});
         if(this.activeWires().length){
             if(real)this.optimizePotPhysicalContacts(wires);
             this.optimizePassiveTerminals(wires);
@@ -2855,7 +2883,7 @@ class CircuitSimulator {
         if (comp.state === 'closed') ctx.lineTo(18,0);
         else ctx.lineTo(14,-17);
         ctx.stroke(); ctx.lineWidth = 2;
-        this.label(comp, comp.state === 'closed' ? '开关(闭合)' : '开关(断开)', 0, 24,
+        this.label(comp, (comp.label||'开关')+(comp.state === 'closed' ? '(闭合)' : '(断开)'), 0, 24,
             {font:'12px "Microsoft YaHei"', color: comp.state==='closed'?'#2ecc71':'#7f8c8d'});
     }
 
@@ -2867,7 +2895,7 @@ class CircuitSimulator {
         ctx.moveTo(upperX,-28);ctx.lineTo(wx,-28);ctx.lineTo(wx,5);ctx.stroke();
         ctx.fillStyle=this.schematicInk;ctx.beginPath();ctx.moveTo(wx,13);ctx.lineTo(wx-7,-1);ctx.lineTo(wx,3);ctx.lineTo(wx+7,-1);ctx.closePath();ctx.fill();
         this.drawPotCurrent(comp,'schematic');
-        this.label(comp,'滑动变阻器',0,53,{font:'12px Microsoft YaHei'});
+        this.label(comp,comp.label||'滑动变阻器',0,53,{font:'12px Microsoft YaHei'});
     }
 
     drawMeter(comp, letter) {
@@ -2976,7 +3004,7 @@ class CircuitSimulator {
         c.fillStyle='#d1d3d5';c.fillRect(-62,-5,62,9);c.strokeRect(-62,-5,62,9);
         c.fillStyle='#adc3da';c.beginPath();c.roundRect(-82,-8,25,15,5);c.fill();c.stroke();c.fillRect(-64,-10,8,19);c.strokeRect(-64,-10,8,19);c.restore();
         c.fillStyle='#d8be6c';c.beginPath();c.arc(28,-10,3,0,7);c.fill();c.stroke();
-        this.label(comp,comp.state==='closed'?'闭合':'断开',0,54,{font:'12px Microsoft YaHei',color:comp.state==='closed'?'#159c68':'#64748b'});
+        this.label(comp,(comp.label?comp.label+' ':'')+(comp.state==='closed'?'闭合':'断开'),0,54,{font:'12px Microsoft YaHei',color:comp.state==='closed'?'#159c68':'#64748b'});
     }
 
     drawPotentiometerReal(comp) {
@@ -3003,7 +3031,7 @@ class CircuitSimulator {
         this.drawPotCurrent(comp,'real');
         this.label(comp,'P',wx,-70,{font:'bold 17px Georgia'});
         for(const [x,y,label,ly] of [[-76,24,'A',52],[76,24,'B',52],[-112,-30,'C',-51],[112,-30,'D',-51]])this.label(comp,label,x,ly,{font:'bold 16px Georgia'});
-        this.label(comp,'滑动变阻器',0,98,{font:'12px Microsoft YaHei'});
+        this.label(comp,comp.label||'滑动变阻器',0,98,{font:'12px Microsoft YaHei'});
     }
 
     drawMeterReal(comp, letter) {
@@ -3163,12 +3191,20 @@ class CircuitSimulator {
      * ============================================================ */
     buildExperimentMenu() {
         const menu = document.getElementById('exp-menu');
-        EXPERIMENTS.forEach((exp, i) => {
-            const d = document.createElement('div');
-            d.innerHTML = `${exp.title}<small>${exp.subtitle}</small>`;
-            d.addEventListener('click', () => { this.loadExperiment(i); menu.classList.remove('show'); });
-            menu.appendChild(d);
-        });
+        menu.replaceChildren();
+        for (const group of ['规律探究', '控制电路', '测量实验']) {
+            const heading = document.createElement('p');
+            heading.className = 'exp-group'; heading.textContent = group;
+            menu.appendChild(heading);
+            EXPERIMENTS.forEach((exp, i) => {
+                if (exp.group !== group) return;
+                const d = document.createElement('button');
+                d.type = 'button'; d.dataset.experiment = i;
+                d.innerHTML = `${exp.title}<small>${exp.subtitle}</small>`;
+                d.addEventListener('click', () => { this.loadExperiment(i); menu.classList.remove('show'); });
+                menu.appendChild(d);
+            });
+        }
     }
 
     loadExperiment(i) {
@@ -3202,8 +3238,17 @@ class CircuitSimulator {
         const mode=this.viewMode;
         this.viewMode='schematic';this.layoutSchematicCircuit(true);
         this.schematicReference={components:JSON.parse(JSON.stringify(this.components)),wires:JSON.parse(JSON.stringify(this.wires.filter(w=>w.view!=='real')))};
-        this.viewMode='real';this.layoutRealCircuit(true);
-        this.viewMode=mode;this._routeKey=null;
+        // Lay out the practice kit against its intended completed wiring as well.
+        // Temporarily expose reference wires so passive-post optimization runs;
+        // restore the blank practice view even if placement fails.
+        const visibility=this.wires.map(w=>w.view);
+        try {
+            this.wires.forEach(w=>{if(w.view==='schematic')w.view='both';});
+            this.viewMode='real';this.layoutRealCircuit(true);
+        } finally {
+            this.wires.forEach((w,i)=>w.view=visibility[i]);
+            this.viewMode=mode;this._routeKey=null;
+        }
     }
 
     drawMiniSchematic() {
@@ -3239,6 +3284,7 @@ class CircuitSimulator {
 const EXPERIMENTS = [
     {
         title: '① 探究串联电路的电流规律',
+        group: '规律探究',
         subtitle: '串联各处电流相等',
         goal: '验证串联电路中各处电流相等。',
         steps: [
@@ -3267,6 +3313,7 @@ const EXPERIMENTS = [
     },
     {
         title: '② 探究并联电路的电流规律',
+        group: '规律探究',
         subtitle: '干路电流=各支路之和',
         goal: '验证并联电路干路电流等于各支路电流之和。',
         steps: [
@@ -3299,6 +3346,7 @@ const EXPERIMENTS = [
     },
     {
         title: '③ 伏安法测电阻',
+        group: '测量实验',
         subtitle: '电流表串联，电压表并联',
         goal: '用电流表、电压表测出未知电阻，练习欧姆定律 R=U/I。',
         steps: [
@@ -3331,6 +3379,7 @@ const EXPERIMENTS = [
     },
     {
         title: '④ 滑动变阻器调节灯泡亮度',
+        group: '控制电路',
         subtitle: '理解变阻器的作用',
         goal: '观察滑动变阻器改变电路电流，从而改变灯泡亮度。',
         steps: [
@@ -3351,6 +3400,128 @@ const EXPERIMENTS = [
             sim.connectTerminals(am,'neg', bulb,'shell');
             sim.connectTerminals(bulb,'tip', bat,'neg');
             sim.selectedComponent = pot; // 直接选中变阻器方便调节
+        }
+    },
+    {
+        title: '⑤ 探究串联电路的电压规律', group: '规律探究',
+        subtitle: '总电压等于各部分电压之和',
+        goal: '同时测量两灯电压和总电压，验证 U=U₁+U₂。',
+        steps: [
+            'V₁、V₂ 分别并联在 L₁、L₂ 两端，V 测量两灯的总电压。',
+            '闭合开关，比较三个电压表的示数。',
+            '两灯电阻初始不同；改变电阻或电源电压，记录多组读数。',
+            '结论：U=U₁+U₂。串联灯泡的电压不一定相等。'
+        ],
+        build(sim) {
+            const b=sim.createComponent('battery',{voltage:3}),s=sim.createComponent('switch',{state:'closed'});
+            const l1=sim.createComponent('bulb',{resistance:10,label:'L1'}),l2=sim.createComponent('bulb',{resistance:20,label:'L2'});
+            const v1=sim.createComponent('voltmeter',{label:'V1'}),v2=sim.createComponent('voltmeter',{label:'V2'}),v=sim.createComponent('voltmeter',{label:'V'});
+            sim.connectTerminals(b,'pos',s,'b');sim.connectTerminals(s,'a',l1,'tip');
+            sim.connectTerminals(l1,'shell',l2,'tip');sim.connectTerminals(l2,'shell',b,'neg');
+            sim.connectTerminals(v1,'r3',l1,'tip');sim.connectTerminals(v1,'neg',l1,'shell');
+            sim.connectTerminals(v2,'r3',l2,'tip');sim.connectTerminals(v2,'neg',l2,'shell');
+            sim.connectTerminals(v,'r3',l1,'tip');sim.connectTerminals(v,'neg',l2,'shell');sim.selectedComponent=null;
+        }
+    },
+    {
+        title: '⑥ 探究并联电路的电压规律', group: '规律探究',
+        subtitle: '支路电压与电源电压相等',
+        goal: '同时测量电源和两个并联灯泡的电压，验证 U=U₁=U₂。',
+        steps: [
+            'V 测电源两端，V₁、V₂ 分别并联在 L₁、L₂ 上方。',
+            '闭合开关，观察两个支路的电压是否相同。',
+            '改变一个灯泡的电阻，比较支路电压与亮度；再改变电源电压。',
+            '结论：并联各支路两端电压相等，U=U₁=U₂。'
+        ],
+        build(sim) {
+            const b=sim.createComponent('battery',{voltage:3}),s=sim.createComponent('switch',{state:'closed'});
+            const l1=sim.createComponent('bulb',{resistance:10,label:'L1'}),l2=sim.createComponent('bulb',{resistance:20,label:'L2'});
+            const v1=sim.createComponent('voltmeter',{label:'V1'}),v2=sim.createComponent('voltmeter',{label:'V2'}),v=sim.createComponent('voltmeter',{label:'V'});
+            sim.connectTerminals(b,'pos',s,'b');sim.connectTerminals(s,'a',l1,'tip');sim.connectTerminals(s,'a',l2,'tip');
+            sim.connectTerminals(l1,'shell',b,'neg');sim.connectTerminals(l2,'shell',b,'neg');
+            sim.connectTerminals(v1,'r3',l1,'tip');sim.connectTerminals(v1,'neg',l1,'shell');
+            sim.connectTerminals(v2,'r3',l2,'tip');sim.connectTerminals(v2,'neg',l2,'shell');
+            sim.connectTerminals(v,'r3',b,'pos');sim.connectTerminals(v,'neg',b,'neg');sim.selectedComponent=null;
+        }
+    },
+    {
+        title: '⑦ 串联电路中开关的作用', group: '控制电路',
+        subtitle: '三处开关都控制整个回路',
+        goal: '比较串联回路不同位置的开关，认识其控制作用相同。',
+        steps: [
+            'S 在电源附近，S₁ 在两灯之间，S₂ 在回路另一侧，初始均闭合。',
+            '每次只断开一个开关，观察两灯；恢复后再试另一个。',
+            '尝试同时断开两个开关，再只闭合其中一个。',
+            '结论：串联回路任意位置断开，整个回路都没有电流。'
+        ],
+        build(sim) {
+            const b=sim.createComponent('battery',{voltage:3}),s=sim.createComponent('switch',{state:'closed',label:'S'});
+            const l1=sim.createComponent('bulb',{label:'L1'}),s1=sim.createComponent('switch',{state:'closed',label:'S1'});
+            const l2=sim.createComponent('bulb',{label:'L2'}),s2=sim.createComponent('switch',{state:'closed',label:'S2'});
+            sim.connectTerminals(b,'pos',s,'b');sim.connectTerminals(s,'a',l1,'tip');sim.connectTerminals(l1,'shell',s1,'b');
+            sim.connectTerminals(s1,'a',l2,'tip');sim.connectTerminals(l2,'shell',s2,'b');sim.connectTerminals(s2,'a',b,'neg');sim.selectedComponent=null;
+        }
+    },
+    {
+        title: '⑧ 并联电路的开关控制', group: '控制电路',
+        subtitle: '干路总控，支路独立控制',
+        goal: '区分干路开关与支路开关的控制范围。',
+        steps: [
+            'S 是干路总开关，S₁、S₂ 分别与 L₁、L₂ 串联在各自支路。',
+            '分别断开 S₁、S₂，观察另一支路是否仍正常工作。',
+            '闭合两个支路开关，再断开干路 S，观察两灯。',
+            '结论：干路开关控制整个电路，支路开关只控制所在支路。'
+        ],
+        build(sim) {
+            const b=sim.createComponent('battery',{voltage:3}),s=sim.createComponent('switch',{state:'closed',label:'S'});
+            const s1=sim.createComponent('switch',{state:'closed',label:'S1'}),l1=sim.createComponent('bulb',{label:'L1'});
+            const s2=sim.createComponent('switch',{state:'closed',label:'S2'}),l2=sim.createComponent('bulb',{label:'L2'});
+            sim.connectTerminals(b,'pos',s,'b');sim.connectTerminals(s,'a',s1,'b');sim.connectTerminals(s,'a',s2,'b');
+            sim.connectTerminals(s1,'a',l1,'tip');sim.connectTerminals(s2,'a',l2,'tip');
+            sim.connectTerminals(l1,'shell',b,'neg');sim.connectTerminals(l2,'shell',b,'neg');sim.selectedComponent=null;
+        }
+    },
+    {
+        title: '⑨ 滑动变阻器接法对比', group: '控制电路',
+        subtitle: 'A-C 与 B-C：同向滑动，变化相反',
+        goal: '对比两个支路的 A-C、B-C 接法，理解接入电阻丝长度的变化。',
+        steps: [
+            '两个支路分别使用 R₁ 的 A-C 接法和 R₂ 的 B-C 接法；实物接线时保持指定接线柱。',
+            '两滑片初始在中点。将两者分别设为相同位置，比较电流和亮度。',
+            '向左移动：A-C 接入电阻减小，B-C 接入电阻增大；向右移动相反。',
+            '打开变阻器原理图，观察横梁、滑片与有效电阻丝上的红色电流路径。',
+            '每个电流表仍只测自己所在支路，不能把分流点移过电流表。'
+        ],
+        build(sim) {
+            const b=sim.createComponent('battery',{voltage:3}),s=sim.createComponent('switch',{state:'closed',label:'S'});
+            sim.connectTerminals(b,'pos',s,'b');
+            for(const [n,lower] of [[1,'a'],[2,'b']]){
+                const p=sim.createComponent('potentiometer',{resistance:20,position:.5,label:'R'+n});p.potContactMode='pinned';
+                const a=sim.createComponent('ammeter',{label:'A'+n}),l=sim.createComponent('bulb',{label:'L'+n});
+                sim.connectTerminals(s,'a',p,'c');sim.connectTerminals(p,lower,a,'r0_6');
+                sim.connectTerminals(a,'neg',l,'tip');sim.connectTerminals(l,'shell',b,'neg');
+            }
+            sim.selectedComponent=sim.components.find(c=>c.type==='potentiometer');
+        }
+    },
+    {
+        title: '⑩ 测量小灯泡的电功率', group: '测量实验',
+        subtitle: '电流表串联、电压表并联，P=UI',
+        goal: '测量灯泡两端电压和通过它的电流，计算实际电功率并比较亮度。',
+        steps: [
+            '电流表串联，电压表并联在灯泡两端。闭合前滑片置最大阻值。',
+            '闭合开关，逐步减小变阻器阻值，观察电压、电流和亮度。',
+            '用“实验记录”采集 U、I，计算 P=UI；本灯泡额定电流为 0.3 A，对应 3 V、0.9 W。',
+            '比较不同功率下的亮度，超过额定值时注意过载提示。',
+            '当前灯泡按固定电阻近似，适合探究功率与亮度；不用于研究温度对灯丝电阻的影响。'
+        ],
+        build(sim) {
+            const b=sim.createComponent('battery',{voltage:3}),s=sim.createComponent('switch',{state:'open'});
+            const a=sim.createComponent('ammeter',{label:'A'}),p=sim.createComponent('potentiometer',{resistance:20,position:1,label:'R'});
+            const l=sim.createComponent('bulb',{resistance:10,ratedCurrent:.3,label:'L'}),v=sim.createComponent('voltmeter',{label:'V'});
+            sim.connectTerminals(b,'pos',s,'b');sim.connectTerminals(s,'a',a,'r0_6');sim.connectTerminals(a,'neg',p,'c');
+            sim.connectTerminals(p,'a',l,'tip');sim.connectTerminals(l,'shell',b,'neg');
+            sim.connectTerminals(v,'r3',l,'tip');sim.connectTerminals(v,'neg',l,'shell');sim.selectedComponent=s;
         }
     }
 ];

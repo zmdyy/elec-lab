@@ -317,12 +317,12 @@ assert.ok(support.wireRoutesReport(new Map([[wire,[binding,{x:binding.x,y:bindin
 console.log('PASS attached rheostat support and rod obstructions are included in wire clearance checks');
 
 // Exercise the real experiment initialization, including its separate reference and blank practice view.
-for(let index=0;index<4;index++){
+for(let index=0;index<sandbox.experiments.length;index++){
  const m=build(index);m.wires.forEach(w=>w.view='schematic');
  const wiring=JSON.stringify(m.wires.map(w=>[w.start,w.end]));m.prepareExperimentViews();
  assertEquivalentConnections(m,wiring);
  assert.ok(m.schematicReference.wires.every(w=>w.autoSchematic&&w.bends.length===0),'reference must discard obsolete template elbows');
- m.components.find(c=>c.type==='switch').state='closed';m.viewMode='schematic';m.solveCircuit();
+ m.components.filter(c=>c.type==='switch').forEach(c=>c.state='closed');m.viewMode='schematic';m.solveCircuit();
  assert.ok(m.components.filter(c=>['ammeter','voltmeter'].includes(c.type)).every(c=>c.measurement>0),'built-in references must have positive meter readings');
  const readings=m.components.map(c=>c.measurement||0),resolve=m.resolveRealWire,sample=m.sampleRealWirePath;
  m.resolveRealWire=m.resolveWire;m.sampleRealWirePath=p=>p;assertSafeRoutes(m);m.resolveRealWire=resolve;m.sampleRealWirePath=sample;
@@ -449,3 +449,43 @@ for(const [name,builder] of [['series',()=>build(0)],['parallel',()=>build(1)],[
 const vertical=build(0);vertical.layoutSchematicCircuit(true);vertical.selectedComponent=vertical.components.find(c=>c.schematicRotation===270);
 vertical.rotateSelected();assert.equal(vertical.componentAngle(vertical.selectedComponent),0,'manual rotation starts from displayed symbol orientation');
 console.log('PASS manual symbol rotation overrides automatic vertical meter leads');
+
+// Typical classroom circuits: verify electrical behavior as well as the presentation.
+for(let index=4;index<10;index++)for(const reverse of [false,true]){
+ const m=build(index);m.components.filter(c=>c.type==='switch').forEach(c=>c.state='closed');if(reverse)m.wires.reverse();
+ m.solveCircuit();const readings=m.components.map(c=>c.measurement||0),wiring=JSON.stringify(m.wires.map(w=>[w.start,w.end]));
+ const angles=JSON.stringify(m.components.map(c=>[c.rotation,c.realRotation]));
+ for(const mode of ['schematic','real']){
+  m.viewMode=mode;m.layoutCircuit(true,mode==='real');m.solveCircuit();assertEquivalentConnections(m,wiring);
+  assert.equal(JSON.stringify(m.components.map(c=>[c.rotation,c.realRotation])),angles);
+  m.components.forEach((c,j)=>assert.ok(Math.abs((c.measurement||0)-readings[j])<1e-6));
+  const resolve=m.resolveRealWire,sample=m.sampleRealWirePath;
+  if(mode==='schematic'){m.resolveRealWire=m.resolveWire;m.sampleRealWirePath=p=>p;}
+  assertSafeRoutes(m);m.resolveRealWire=resolve;m.sampleRealWirePath=sample;
+  if(mode==='schematic')for(const w of m.wires){const p=m.resolveWire(w);p.slice(1).forEach((q,j)=>assert.ok(Math.abs(q.x-p[j].x)<1e-6||Math.abs(q.y-p[j].y)<1e-6));}
+  for(const v of m.components.filter(c=>c.type==='voltmeter')){
+   assert.ok(v.measurement>0);const leads=m.wires.filter(w=>[w.start.compId,w.end.compId].includes(v.id));
+   const owners=leads.map(w=>w.start.compId===v.id?w.end.compId:w.start.compId);
+   if(owners[0]===owners[1]){const load=m.components.find(c=>c.id===owners[0]);assert.ok(m.componentPos(v).y<m.componentPos(load).y);
+    assert.ok(Math.abs(m.componentPos(v).x-m.componentPos(load).x)<1e-6,'voltmeter directly above its explicit measured object');}
+  }
+ }
+ const byLabel=label=>m.components.find(c=>c.label===label),lamps=m.components.filter(c=>c.type==='bulb');
+ if(index===4)assert.ok(Math.abs(byLabel('V').measurement-byLabel('V1').measurement-byLabel('V2').measurement)<1e-5);
+ if(index===5){for(const v of m.components.filter(c=>c.type==='voltmeter'))assert.ok(Math.abs(v.measurement-3)<1e-5);
+  lamps[0].resistance=30;m.solveCircuit();for(const v of m.components.filter(c=>c.type==='voltmeter'))assert.ok(Math.abs(v.measurement-3)<1e-5);}
+ if(index===6){for(const sw of m.components.filter(c=>c.type==='switch')){sw.state='open';m.solveCircuit();assert.ok(lamps.every(c=>Math.abs(c.current)<1e-6));sw.state='closed';}}
+ if(index===7){for(const label of ['S','S1','S2']){const sw=byLabel(label);sw.state='open';m.solveCircuit();
+  if(label==='S')assert.ok(lamps.every(c=>Math.abs(c.current)<1e-6));
+  else {assert.ok(Math.abs(byLabel('L'+label.slice(1)).current)<1e-6);assert.ok(Math.abs(Math.abs(byLabel(label==='S1'?'L2':'L1').current)-.3)<1e-5);assert.ok(Math.abs(byLabel(label==='S1'?'L2':'L1').current)>.29);}
+  sw.state='closed';}}
+ if(index===8){const pots=m.components.filter(c=>c.type==='potentiometer'),previous=[null,null];
+  for(const position of [.1,.5,.9]){pots.forEach(c=>c.position=position);m.solveCircuit();const currents=[byLabel('A1').measurement,byLabel('A2').measurement];
+   assert.ok(currents.every(c=>c>0));if(previous[0]!=null){assert.ok(currents[0]<previous[0]);assert.ok(currents[1]>previous[1]);}currents.forEach((c,j)=>previous[j]=c);
+   pots.forEach((c,j)=>{assert.equal(c.potContactMode,'pinned');assert.ok(m.isTerminalConnected(c,j?'b':'a'));for(const view of ['real','schematic','principle'])assert.equal(m.potCurrentPaths(c,view).length,3);});}}
+ if(index===9){const pot=m.components.find(c=>c.type==='potentiometer'),lamp=lamps[0];let previous=-1;
+  for(const position of [1,.5,0]){pot.position=position;m.solveCircuit();const power=byLabel('V').measurement*byLabel('A').measurement;
+   assert.ok(Math.abs(power-m.bulbAppearance(lamp).power)<1e-5);assert.ok(power>previous);previous=power;}// The existing solver retains 0.01 ohm at the slider endpoint and a 1 Mohm voltmeter.
+  const load=1/(1/10+1/1e6),expected=9*load/(load+.01)**2;assert.ok(Math.abs(previous-expected)<1e-5);assert.equal(previous.toFixed(2),'0.90');}
+ console.log(`PASS typical experiment ${index+1}, ${reverse?'reversed':'original'}: both views clear, explicit voltage pairing, unchanged branches/angles/readings, and intended experiment behavior`);
+}

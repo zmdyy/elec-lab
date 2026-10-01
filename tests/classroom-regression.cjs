@@ -11,7 +11,7 @@ const copy=x=>JSON.parse(JSON.stringify(x));
 function build(index=0){const s=Object.create(sandbox.Simulator.prototype);Object.assign(s,{components:[],wires:[],idCounter:0,viewMode:'schematic',simulationRunning:true,scale:.8,panX:43,panY:21,darkMode:false,showGrid:true,showPotPrinciple:false,activeExperiment:null});for(const fn of ['draw','resizeCanvas','updatePropertiesPanel','updateCircuitInfo','drawMiniSchematic'])s[fn]=()=>{};s.restoreClassroom();s.undoStack=[];s.maxUndo=6;s.suppressUndo=true;sandbox.experiments[index].build(s);s.wires.forEach(w=>{w.view='both';for(const end of [w.start,w.end])if(end.termId==='r3'&&s.components.find(c=>c.id===end.compId).type==='voltmeter')end.termId='r15';});s.suppressUndo=false;s.components.filter(c=>c.type==='switch').forEach(c=>c.state='closed');s.solveCircuit();return s;}
 const meterValues=s=>s.components.filter(c=>['ammeter','voltmeter'].includes(c.type)).map(c=>c.measurement);
 const assertReadings=(s,values)=>meterValues(s).forEach((v,i)=>assert.ok(Math.abs(v-values[i])<1e-6,JSON.stringify({after:meterValues(s),before:values})));
-for(let i=0;i<4;i++){
+for(let i=0;i<sandbox.experiments.length;i++){
  const s=build(i),p=s.components.find(c=>c.type==='potentiometer');if(p){p.position=.37;p.potContactMode='pinned';p.potUpperSide=-1;}
  s.wires[0].autoSchematic=true;s.wires[1].bends=[{x:100,y:80}];s.wires[1].realBends=[{x:160,y:95}];s.schematicReference={components:copy(s.components),wires:copy(s.wires)};
  s.components.forEach((c,j)=>{c.realX=c.x+j*10;c.realY=c.y-j*20;c.realRotation=c.rotation;});s.recalc();
