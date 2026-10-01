@@ -1003,7 +1003,7 @@ class CircuitSimulator {
         const signatureKey=real?'_realLayoutSignature':'_schematicLayoutSignature';
         const put=(c,x,y)=>{if(real){c.realX=x;c.realY=y;c.realFlipX=false;}else{c.x=x;c.y=y;c.schematicFlipX=false;}};
         const wires=this.activeWires().length?this.activeWires():this.wires.filter(w=>w.view!=='real');
-        const signature=JSON.stringify(['teaching-loop-right-positive-v5',this.components.map(c=>[c.id,c.type]),wires.map(w=>[w.start,w.end])]);
+        const signature=JSON.stringify(['compact-right-positive-v6',this.components.map(c=>[c.id,c.type]),wires.map(w=>[w.start,w.end])]);
         if(!force&&this[signatureKey]===signature)return;
         this[signatureKey]=signature;
         const parent=new Map(),find=k=>{if(!parent.has(k))parent.set(k,k);let r=k;while(parent.get(r)!==r)r=parent.get(r);return r;};
@@ -1070,7 +1070,9 @@ class CircuitSimulator {
                 // This puts an upright meter's positive lead towards the preceding stage and its negative lead towards the next.
                 const stages=[],collect=(e,from)=>{if(e.kind!=='series'){stages.push({e,from});return;}let node=from;for(const child of from===e.u?e.children:[...e.children].reverse()){collect(child,node);node=child.u===node?child.v:child.u;}};
                 collect(root,source);
-                const stageWidth=Math.max(1100,(stages.length-1)*340);
+                // Use both dimensions of the workspace rather than stretching every extra stage sideways.
+                const stageWidth=Math.max(900,(stages.length-1)*220);
+                const stageHeight=Math.max(420,(stages.length-1)*100);
                 const arrange=(e,from,x,y)=>{
                     if(e.kind==='leaf'){put(e.comp,x,y);placed.add(e.comp.id);return;}
                     if(e.kind==='parallel'){
@@ -1079,12 +1081,15 @@ class CircuitSimulator {
                         const children=[...e.children].sort((a,b)=>Number(hasMeter(a))-Number(hasMeter(b)));
                         const hasA=c=>c.kind==='leaf'?c.comp.type==='ammeter':c.children.some(hasA);
                         const gap=children.some(hasA)?330:260;
-                        children.forEach((child,i)=>arrange(child,from,x,y+i*gap));return;
+                        // A measurement pair keeps its load on the loop; other parallel groups straddle it.
+                        // This prevents the lower branch from crowding the next series meter's lead corridor.
+                        const top=children.some(hasMeter)?y:y-(children.length-1)*gap/2;
+                        children.forEach((child,i)=>arrange(child,from,x,top+i*gap));return;
                     }
                     const children=from===e.u?e.children:[...e.children].reverse();let node=from;
                     children.forEach((child,i)=>{arrange(child,node,x+((children.length-1)/2-i)*260,y);node=child.u===node?child.v:child.u;});
                 };
-                stages.forEach(({e,from},i)=>{const t=stages.length===1?.5:i/(stages.length-1);arrange(e,from,440+(1+Math.cos(Math.PI*t))*stageWidth/2,140+340*Math.sin(Math.PI*t));});
+                stages.forEach(({e,from},i)=>{const t=stages.length===1?.5:i/(stages.length-1);arrange(e,from,440+(1+Math.cos(Math.PI*t))*stageWidth/2,140+stageHeight*Math.sin(Math.PI*t));});
                 put(battery,440+stageWidth/2,100);placed.add(battery.id);
             }else place(root,source,140,280);
             if(!real){put(battery,140+d.w/2,110);placed.add(battery.id);}

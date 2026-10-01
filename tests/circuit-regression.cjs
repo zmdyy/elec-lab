@@ -213,3 +213,14 @@ const disconnected=build(0);disconnected.components=[];disconnected.viewMode='sc
 ];
 assert.equal(disconnected.schematicJunctionPoints().length,0,'crossing disconnected wires must not acquire a junction dot');
 console.log('PASS schematic junctions only mark electrically connected branches');
+
+// Physical teaching layouts should fill both dimensions instead of forming a very wide strip.
+for(const builder of [()=>build(0),()=>build(1),()=>build(2),()=>build(3),buildUserMixed,buildFeedback,buildLatestMeasurement,buildRedLineMeasurement]){
+ const m=builder();m.viewMode='real';m.layoutRealCircuit(true);
+ const boxes=m.components.map(c=>m.realComponentBox(c,0));
+ const width=Math.max(...boxes.map(b=>b.right))-Math.min(...boxes.map(b=>b.left));
+ const height=Math.max(...boxes.map(b=>b.bottom))-Math.min(...boxes.map(b=>b.top));
+ assert.ok(width/height>=.85&&width/height<=2.1,'physical layout must have a balanced width and height');
+ assert.ok(width<=1300,'these teaching fixtures must fit a compact component footprint');
+}
+console.log('PASS eight compact physical layouts: balanced proportions and bounded horizontal span');
