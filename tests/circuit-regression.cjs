@@ -2,7 +2,7 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),path=require('node:path');
 const html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8');
 const code=html.match(/<script>([\s\S]*?)<\/script>/)[1];
-const dummy={classList:{contains:()=>false,toggle(){},remove(){}},style:{}};
+const dummy={classList:{contains:()=>false,toggle(){},remove(){},add(){}},style:{},querySelector:()=>({addEventListener(){}})};
 const sandbox={document:{getElementById:()=>dummy,querySelectorAll:()=>[]},window:{addEventListener(){}}};
 vm.createContext(sandbox);vm.runInContext(code+'\nthis.Simulator=CircuitSimulator;this.experiments=EXPERIMENTS;',sandbox);
 function build(index){const s=Object.create(sandbox.Simulator.prototype);Object.assign(s,{components:[],wires:[],idCounter:0,viewMode:'schematic',simulationRunning:true});
@@ -200,7 +200,7 @@ for(const builder of [buildLatestMeasurement,buildRedLineMeasurement])for(const 
   assertEquivalentConnections(m,connections);
   m.components.forEach((c,i)=>{assert.equal(c.rotation,rotations[i]);assert.equal(m.componentAngle(c),rotations[i]);assert.ok(Math.abs((c.measurement||0)-before[i])<1e-6);});
   if(mode==='real'){
-   assertSafeRoutes(m);assert.equal(m._routingMode,'independent');
+   assertSafeRoutes(m);assert.ok(['natural','independent'].includes(m._routingMode));
    const load=m.components.find(c=>c.type==='resistor'),meter=m.components.find(c=>c.type==='voltmeter');
    assert.equal(load.realX,meter.realX);assert.ok(meter.realY<load.realY);
    const battery=m.components.find(c=>c.type==='battery'),ammeter=m.components.find(c=>c.type==='ammeter');
@@ -244,8 +244,9 @@ for(const builder of [()=>build(0),()=>build(1),()=>build(2),()=>build(3),buildU
  const height=Math.max(...boxes.map(b=>b.bottom))-Math.min(...boxes.map(b=>b.top));
  assert.ok(width/height>=.85&&width/height<=2.1,'physical layout must have a balanced width and height');
  assert.ok(width<=1300,'these teaching fixtures must fit a compact component footprint');
+ assertSafeRoutes(m);assert.equal(m._routingMode,'natural','representative layouts must use the complete-network planner');
 }
-console.log('PASS eight compact physical layouts: balanced proportions and bounded horizontal span');
+console.log('PASS eight compact physical layouts: balanced proportions, bounded span, complete-network planning and safe routes');
 
 // Electrical equivalence must reject moving a split past a zero-ohm ammeter.
 const movedSplit=build(1),splitBefore=JSON.stringify(movedSplit.wires.map(w=>[w.start,w.end]));
@@ -285,3 +286,60 @@ for(const mode of ['schematic','real']){
  }
 }
 console.log('PASS shorter equivalent passive wiring and consistent left-negative/right-positive meter posts');
+
+function buildPartialAmmeter(){
+ const m=build(0);m.components=[];m.wires=[];m.viewMode='real';
+ m.createComponent('battery',{x:551/.6,y:168/.6,voltage:3});
+ const main=m.createComponent('ammeter',{x:551/.6,y:443/.6});
+ const upper=m.createComponent('ammeter',{x:306/.6,y:168/.6}),lower=m.createComponent('ammeter',{x:306/.6,y:374/.6});
+ for(const y of [168,374])m.createComponent('bulb',{x:145/.6,y:y/.6});
+ m.connectTerminals(main,'neg',upper,'r0_6',[],'real');m.connectTerminals(main,'neg',lower,'r0_6',[],'real');
+ return m;
+}
+// The annotated, unfinished physical circuit must work without a closed topology or moving any component.
+for(const reversed of [false,true]){
+ const m=buildPartialAmmeter();if(reversed)m.wires.reverse();
+ const wiring=JSON.stringify(m.wires.map(w=>[w.start,w.end])),geometry=JSON.stringify(m.components);
+ assertSafeRoutes(m);assert.equal(m._routingMode,'natural');
+ for(const w of m.wires){
+  const p=m.sampleRealWirePath(m.resolveRealWire(w)),a=p[0],b=p.at(-1),direct=Math.hypot(b.x-a.x,b.y-a.y);
+  const length=p.slice(1).reduce((sum,q,i)=>sum+Math.hypot(q.x-p[i].x,q.y-p[i].y),0);
+  assert.ok(length<direct*1.12,'each shared-post lead should remain close to its direct diagonal, without a long return loop');
+ }
+ assert.equal(JSON.stringify(m.wires.map(w=>[w.start,w.end])),wiring);assert.equal(JSON.stringify(m.components),geometry);
+}
+console.log('PASS annotated unfinished meter split: short diagonal leads, no crossing, both wire orders, unchanged placement and posts');
+
+const support=build(3);support.viewMode='real';support.layoutRealCircuit(true);
+const rheostat=support.components.find(c=>c.type==='potentiometer'),wire=support.wires.find(w=>[w.start.compId,w.end.compId].includes(rheostat.id)&&[w.start.termId,w.end.termId].includes('c'));
+const binding=support.terminalPos(rheostat.id,'c');
+assert.ok(support.wireRoutesReport(new Map([[wire,[binding,{x:binding.x,y:binding.y+120}]]])).body.length>0,'a C lead must not run down through its own support');
+console.log('PASS attached rheostat support and rod obstructions are included in wire clearance checks');
+
+// Exercise the real experiment initialization, including its separate reference and blank practice view.
+for(let index=0;index<4;index++){
+ const m=build(index);m.wires.forEach(w=>w.view='schematic');
+ const wiring=JSON.stringify(m.wires.map(w=>[w.start,w.end]));m.prepareExperimentViews();
+ assertEquivalentConnections(m,wiring);
+ assert.ok(m.schematicReference.wires.every(w=>w.autoSchematic&&w.bends.length===0),'reference must discard obsolete template elbows');
+ m.components.find(c=>c.type==='switch').state='closed';m.viewMode='schematic';m.solveCircuit();
+ assert.ok(m.components.filter(c=>['ammeter','voltmeter'].includes(c.type)).every(c=>c.measurement>0),'built-in references must have positive meter readings');
+ const readings=m.components.map(c=>c.measurement||0),resolve=m.resolveRealWire,sample=m.sampleRealWirePath;
+ m.resolveRealWire=m.resolveWire;m.sampleRealWirePath=p=>p;assertSafeRoutes(m);m.resolveRealWire=resolve;m.sampleRealWirePath=sample;
+ m.viewMode='real';assert.equal(m.activeWires().length,0,'experiment must retain the student wiring practice');
+ const b=m.components.find(c=>c.type==='battery');assert.ok(m.terminalPos(b.id,'pos').x>m.terminalPos(b.id,'neg').x);
+ m.wires.forEach(w=>w.view='both');m.solveCircuit();assertSafeRoutes(m);
+ m.components.forEach((c,i)=>assert.ok(Math.abs((c.measurement||0)-readings[i])<1e-6,'matching physical wiring must retain reference readings'));
+ if(index===1){const main=m.components.find(c=>c.type==='ammeter'),branches=m.components.filter(c=>c.type==='ammeter'&&c!==main);
+  assert.ok(main.realY>Math.min(...branches.map(c=>c.realY))&&main.realY<Math.max(...branches.map(c=>c.realY)),'main meter should sit beside the middle of its branches');}
+ console.log('PASS built-in experiment '+(index+1)+': initialized reference and physical placement, right-positive supply, positive readings, equivalent student wiring');
+}
+
+for(const mode of ['schematic','real'])for(let index=0;index<4;index++){
+ const m=build(0);m.viewMode=mode;m.fitView=()=>{};m.drawMiniSchematic=()=>{};m.loadExperiment(index);
+ assert.equal(m.viewMode,mode);assert.equal(m.activeExperiment,index);assert.equal(m.schematicReference.components.length,m.components.length);
+ assert.ok(m.schematicReference.wires.every(w=>w.autoSchematic));
+ if(mode==='real')assert.equal(m.activeWires().length,0);
+ const b=m.components.find(c=>c.type==='battery');assert.ok(m.terminalPos(b.id,'pos').x>m.terminalPos(b.id,'neg').x);
+}
+console.log('PASS all four experiment loaders in both views retain the prepared reference, polarity and wiring practice');
