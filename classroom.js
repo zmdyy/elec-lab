@@ -4,7 +4,7 @@
 (() => {
 const STORAGE_KEY='elec-lab-experiment-v1';
 const MAX_FILE_BYTES=2*1024*1024;
-const componentFields=['id','type','x','y','rotation','realX','realY','realRotation','schematicRotation','realFlipX','schematicFlipX','voltage','resistance','ratedCurrent','position','state','range','label','potUpperSide','potContactMode','fault'];
+const componentFields=['id','type','x','y','rotation','realX','realY','realRotation','schematicRotation','realFlipX','schematicFlipX','voltage','resistance','ratedCurrent','forwardVoltage','position','state','range','label','potUpperSide','potContactMode','fault'];
 const clone=x=>JSON.parse(JSON.stringify(x));
 const byId=id=>document.getElementById(id);
 const escape=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -24,7 +24,8 @@ function validateGraph(graph) {
   requireValid(finite(c.x)&&finite(c.y),'元件位置无效。');
   for(const k of ['rotation','realRotation','schematicRotation'])if(c[k]!==undefined)requireValid(finite(c[k],-3600,3600),'元件方向无效。');
   for(const k of ['realX','realY'])if(c[k]!==undefined)requireValid(finite(c[k]),'实物图位置无效。');
-  for(const k of ['voltage','resistance','ratedCurrent'])if(c[k]!==undefined)requireValid(finite(c[k],0,1e8),'电压、电阻或额定电流无效。');
+  for(const k of ['voltage','resistance','ratedCurrent','forwardVoltage'])if(c[k]!==undefined)requireValid(finite(c[k],0,1e8),'电压、电阻或额定电流无效。');
+  if(c.type==='led')requireValid(finite(c.forwardVoltage,.1,10)&&finite(c.resistance,.01,1e8)&&finite(c.ratedCurrent,.001,1),'二极管参数无效。');
   if(c.position!==undefined)requireValid(finite(c.position,0,1),'滑片位置应在 0 到 1 之间。');
   if(c.state!==undefined)requireValid(['open','closed'].includes(c.state),'开关状态无效。');
   if(c.range!==undefined)requireValid((c.type==='ammeter'?[.6,3]:[3,15]).includes(c.range),'电表量程无效。');
@@ -103,7 +104,7 @@ Object.assign(CircuitSimulator.prototype, {
   for(const [selector,cls] of [['.component-library','library-collapsed'],['.properties-panel','properties-collapsed']]){const close=document.createElement('button');close.className='panel-close';close.textContent='收起';close.onclick=()=>{document.body.classList.add(cls);byId(cls==='library-collapsed'?'library-toggle':'properties-toggle').setAttribute('aria-expanded','false');this.resizeCanvas();};document.querySelector(selector).prepend(close);}
   const miniTitle=document.querySelector('#schematic-mini .mini-title');miniTitle.textContent='参考电路图 · 点击收起 / 展开';miniTitle.style.cursor='pointer';miniTitle.tabIndex=0;miniTitle.setAttribute('role','button');miniTitle.setAttribute('aria-expanded','true');const toggleMini=()=>{const closed=byId('schematic-mini').classList.toggle('mini-collapsed');miniTitle.setAttribute('aria-expanded',String(!closed));};miniTitle.onclick=toggleMini;miniTitle.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleMini();}};
   for(const [id,cls] of [['library-toggle','library-collapsed'],['properties-toggle','properties-collapsed']])byId(id).onclick=()=>{const collapsed=document.body.classList.toggle(cls);byId(id).setAttribute('aria-expanded',String(!collapsed));this.resizeCanvas();};
-  if(window.innerWidth<1100){document.body.classList.add('library-collapsed','properties-collapsed');byId('library-toggle').setAttribute('aria-expanded','false');byId('properties-toggle').setAttribute('aria-expanded','false');}
+  const compact=window.matchMedia('(max-width:1099px)');const collapsePanels=()=>{if(compact.matches){document.body.classList.add('library-collapsed','properties-collapsed');byId('library-toggle').setAttribute('aria-expanded','false');byId('properties-toggle').setAttribute('aria-expanded','false');}};collapsePanels();compact.addEventListener('change',collapsePanels);
   byId('export-image-btn').onclick=()=>this.openExportDialog();byId('record-btn').onclick=()=>this.openRecordsDialog();byId('prediction-btn').onclick=()=>{if(this.predictionHidden){this.predictionHidden=false;this.updatePropertiesPanel();this.recalc();this.updateMiniSchematicVisibility();}else this.openPredictionDialog();};byId('fault-btn').onclick=()=>this.openFaultDialog();
   try {const saved=localStorage.getItem(STORAGE_KEY);if(saved){const restored=validateExperiment(JSON.parse(saved));this._recoveryData=restored;this._recoveryPending=true;this.renderRecovery();}}catch(_){byId('classroom-status').textContent='上次缓存无法读取，可打开已保存的文件。';}
   document.addEventListener('pointerup',()=>this.scheduleAutosave());

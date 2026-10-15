@@ -253,13 +253,18 @@
             </div>
         </div>
 
+        <div class="component-category"><h3>发光、动力与声音</h3>
+            <div class="component-item" draggable="true" data-type="led"><span class="ico"><svg viewBox="0 0 48 26"><path d="M2 16H15M15 8L29 16L15 24ZM29 8V24M29 16H46M27 5L22 0M36 8L30 2"/><path d="M22 0L23 5M30 2L31 7"/></svg></span><span class="lbl">发光二极管<small>长脚 A · 短脚 K</small></span></div>
+            <div class="component-item" draggable="true" data-type="motor"><span class="ico"><svg viewBox="0 0 48 26"><path d="M1 13H12M36 13H47"/><circle cx="24" cy="13" r="11"/><text x="18" y="18" style="fill:currentColor;stroke:none;font-size:15px">M</text></svg></span><span class="lbl">电动机／风扇<small>反接改变转向</small></span></div>
+            <div class="component-item" draggable="true" data-type="bell"><span class="ico"><svg viewBox="0 0 48 26"><path d="M10 15A14 14 0 0 1 38 15ZM19 15V25M29 15V25"/></svg></span><span class="lbl">电铃<small>两根下引脚接线</small></span></div>
+        </div>
         <div class="hint-box">
             💡 <b>怎么用</b><br>
             ① 拖元件到画布<br>
             ② 点「导线」→ 点接线柱A → 点接线柱B 连线<br>
             ③ 点元件可在右侧改参数<br>
             ④ 选中后按 <b>R</b> 旋转、<b>Del</b> 删除<br>
-            ⑤ 双击开关可通断
+            ⑤ 选择模式双击开关可通断
         </div>
     </div>
 
@@ -409,6 +414,21 @@ const COMPONENT_DEFS = {
         name: '开关', selRadius: 32,
         terminals: () => [ {id:'a', x:-30, y:0}, {id:'b', x:30, y:0} ],
         defaults: { state: 'open' }
+    },
+    led: {
+        name:'发光二极管',selRadius:45,
+        terminals:()=>[{id:'a',x:-36,y:0},{id:'b',x:36,y:0}],
+        defaults:{forwardVoltage:1.8,resistance:10,ratedCurrent:.02}
+    },
+    motor: {
+        name:'电动机／风扇',selRadius:44,
+        terminals:()=>[{id:'a',x:-36,y:0},{id:'b',x:36,y:0}],
+        defaults:{resistance:20,ratedCurrent:.15}
+    },
+    bell: {
+        name:'电铃',selRadius:42,
+        terminals:()=>[{id:'a',x:-12,y:32},{id:'b',x:12,y:32}],
+        defaults:{resistance:30,ratedCurrent:.1}
     },
     potentiometer: {
         name: '滑动变阻器', selRadius: 62,
@@ -670,6 +690,9 @@ class CircuitSimulator {
                 {id:'r3', x:32, y:0}, {id:'r15', x:32, y:0}, {id:'neg', x:-32, y:0}
             ];
         } else {
+            if(comp.type==='led')return [{id:'a',x:-14,y:58},{id:'b',x:14,y:46}];
+            if(comp.type==='motor')return [{id:'a',x:-48,y:39},{id:'b',x:48,y:39}];
+            if(comp.type==='bell')return [{id:'a',x:-34,y:76},{id:'b',x:34,y:76}];
             if (comp.type === 'battery') return comp.voltage <= 3
                 ? [{id:'pos',x:64,y:8},{id:'neg',x:-64,y:8}]
                 : [{id:'neg',x:-48,y:-32},{id:'pos',x:48,y:-32}];
@@ -1144,7 +1167,7 @@ class CircuitSimulator {
     optimizePassiveTerminals(wires) {
         // Swap symmetric passive ends together in every view; preserve source/meter/rheostat polarity.
         // Move a junction anchor only along existing direct wires on the same electrical node.
-        const pair=c=>c.type==='bulb'?['shell','tip']:['resistor','switch'].includes(c.type)?['a','b']:null;
+        const pair=c=>c.type==='bulb'?['shell','tip']:['resistor','switch','bell'].includes(c.type)?['a','b']:null;
         for(let pass=0;pass<6;pass++){
             let changed=false;
             for(const c of this.components){
@@ -1242,7 +1265,7 @@ class CircuitSimulator {
         const rightToLeft=true;
         const placed=new Set();
         const measure=e=>{
-            if(e.kind==='leaf'){const c=e.comp;if(!real)return {w:c.type==='potentiometer'?190:160,h:c.type==='potentiometer'?180:150};return {w:c.type==='potentiometer'?340:['ammeter','voltmeter'].includes(c.type)?220:180,h:['ammeter','voltmeter','potentiometer'].includes(c.type)?280:180};}
+            if(e.kind==='leaf'){const c=e.comp;if(!real)return {w:c.type==='potentiometer'?190:160,h:c.type==='potentiometer'?180:150};return {w:c.type==='potentiometer'?340:['ammeter','voltmeter'].includes(c.type)?220:180,h:['ammeter','voltmeter','potentiometer','bell'].includes(c.type)?280:['led','motor'].includes(c.type)?230:180};}
             const d=e.children.map(measure);
             return e.kind==='series'?{w:d.reduce((sum,p)=>sum+p.w,0)+(d.length-1)*36,h:Math.max(...d.map(p=>p.h))}:{w:Math.max(...d.map(p=>p.w))+(real?110:80),h:d.reduce((sum,p)=>sum+p.h,0)+70};
         };
@@ -1622,7 +1645,7 @@ class CircuitSimulator {
             ...JSON.parse(JSON.stringify(def.defaults))
         };
         // 覆盖外部传入的有效属性
-        ['voltage','resistance','ratedCurrent','position','state','range','rotation','label']
+        ['voltage','resistance','ratedCurrent','forwardVoltage','position','state','range','rotation','label']
             .forEach(k => { if (props[k] !== undefined) comp[k] = props[k]; });
         this.components.push(comp);
         this.selectedComponent = comp; this.selectedWire = null;
@@ -1758,11 +1781,11 @@ class CircuitSimulator {
         const R_VM = 1e6;
         let shorted = false;
         this.components.forEach(c => {
-            if (c.type === 'resistor' || c.type === 'bulb') {
+            if (['resistor','bulb','motor','bell','led'].includes(c.type)) {
                 if (c.fault === 'open' || c.fault === 'short') return;
                 const k1 = c.type === 'bulb' ? c.id+'_shell' : c.id+'_a';
                 const k2 = c.type === 'bulb' ? c.id+'_tip' : c.id+'_b';
-                resistors.push({k1, k2, R:Math.max(c.resistance, 1e-6), comp:c, kind:'series'});
+                resistors.push({k1,k2,R:Math.max(c.resistance,1e-6),comp:c,kind:c.type==='led'?'led':'series',drop:0});
             } else if (c.type === 'voltmeter') {
                 resistors.push({k1:this.meterPositiveKey(c), k2:c.id+'_neg', R:R_VM, comp:c, kind:'vm'});
             } else if (c.type === 'potentiometer') {
@@ -1793,30 +1816,36 @@ class CircuitSimulator {
         // —— 4. 装配 MNA 矩阵 ——
         const m = sources.length;
         const N = n + m;
-        const A = Array.from({length:N}, () => new Array(N).fill(0));
-        const b = new Array(N).fill(0);
-        for (let i = 0; i < n; i++) A[i][i] += 1e-9; // 正则项，避免悬空节点奇异
-
-        resistors.forEach(rb => {
-            const g = 1 / rb.R, p = nodeIdx(rb.k1), q = nodeIdx(rb.k2);
-            if (p >= 0) A[p][p] += g;
-            if (q >= 0) A[q][q] += g;
-            if (p >= 0 && q >= 0) { A[p][q] -= g; A[q][p] -= g; }
-        });
-        sources.forEach((s, si) => {
-            const vi = n + si, p = nodeIdx(s.kp), q = nodeIdx(s.kn);
-            if (p >= 0) { A[p][vi] += 1; A[vi][p] += 1; }
-            if (q >= 0) { A[q][vi] -= 1; A[vi][q] -= 1; }
-            b[vi] += s.E;
-        });
-
-        // —— 5. 求解 ——
-        const x = solveLinear(A, b);
-        const V = key => { const i = nodeIdx(key); return i < 0 ? 0 : (x[i] || 0); };
+        const leds=resistors.filter(r=>r.kind==='led');
+        let x=new Array(N).fill(0),converged=!leds.length;
+        const value=(solution,key)=>{const i=nodeIdx(key);return i<0?0:(solution[i]||0);};
+        // Piecewise-linear LED: I=max(0,(Va-Vk-Vf)/Rd). Rebuild the MNA
+        // stamps until the active set and solution agree; all other loads stay linear.
+        for(let iteration=0;iteration<(leds.length?100:1);iteration++){
+            const A=Array.from({length:N},()=>new Array(N).fill(0)),b=new Array(N).fill(0);
+            for(let i=0;i<n;i++)A[i][i]+=1e-9;
+            for(const rb of resistors){
+                const on=rb.kind==='led'&&value(x,rb.k1)-value(x,rb.k2)>rb.comp.forwardVoltage;
+                const g=rb.kind==='led'?(on?1/rb.R:1e-12):1/rb.R;
+                rb.drop=on?rb.comp.forwardVoltage:0;rb.conductance=g;
+                const p=nodeIdx(rb.k1),q=nodeIdx(rb.k2),offset=g*rb.drop;
+                if(p>=0){A[p][p]+=g;b[p]+=offset;}if(q>=0){A[q][q]+=g;b[q]-=offset;}
+                if(p>=0&&q>=0){A[p][q]-=g;A[q][p]-=g;}
+            }
+            sources.forEach((s,si)=>{const vi=n+si,p=nodeIdx(s.kp),q=nodeIdx(s.kn);
+                if(p>=0){A[p][vi]+=1;A[vi][p]+=1;}if(q>=0){A[q][vi]-=1;A[vi][q]-=1;}b[vi]+=s.E;});
+            const next=solveLinear(A,b);
+            const stable=leds.every(rb=>((value(next,rb.k1)-value(next,rb.k2))>rb.comp.forwardVoltage)===(rb.drop>0));
+            if(stable){x=next;converged=true;break;}
+            x=next.map((v,i)=>iteration===0?v:(v+x[i])*.5);
+        }
+        if(!converged){this.clearFlow();this.reportState('open');document.getElementById('circuit-state').innerHTML='<p class="badge-warn">二极管电路未收敛，请检查接线与参数。</p>';this.draw();return;}
+        const V=key=>value(x,key);
+        const branchCurrent=rb=>rb.kind==='led'?Math.max(0,(V(rb.k1)-V(rb.k2)-rb.comp.forwardVoltage)/rb.R):(V(rb.k1)-V(rb.k2))/rb.R;
 
         // —— 6. 回代各元件 ——
         resistors.forEach(rb => {
-            const I = (V(rb.k1) - V(rb.k2)) / rb.R; // 由 k1 流向 k2 为正
+            const I = branchCurrent(rb); // 由 k1 流向 k2 为正
             if (rb.kind === 'vm') {
                 rb.comp._vmCurrent = I;
                 rb.comp._current = I;
@@ -1827,6 +1856,7 @@ class CircuitSimulator {
             } else {
                 rb.comp._current = I;
             }
+            if(rb.comp.type==='led'){rb.comp.current=I;rb.comp._voltage=V(rb.k1)-V(rb.k2);}
             if (rb.comp.type === 'bulb') {
                 rb.comp.current = Math.abs(I);
                 rb.comp.isLit = Math.abs(I) > 1e-4;
@@ -1865,7 +1895,7 @@ class CircuitSimulator {
         const termFlow = {};                 // 端子→流出该端子进入导线的电流
         const addF = (k, v) => { termFlow[k] = (termFlow[k] || 0) + v; };
         resistors.forEach(rb => {
-            const I = (V(rb.k1) - V(rb.k2)) / rb.R;
+            const I = branchCurrent(rb);
             addF(rb.k1, -I); addF(rb.k2, +I);
         });
         sources.forEach((s, si) => {
@@ -1993,7 +2023,8 @@ class CircuitSimulator {
             if (s && e) addEdge(s, e, {kind:'wire'});
         });
         this.components.forEach(c => {
-            if (c.type === 'resistor') addEdge(c.id+'_a', c.id+'_b', {kind:c.type});
+            if(c.type==='led'){adj[c.id+'_a'].push({to:c.id+'_b',kind:'led'});}
+            else if (['resistor','motor','bell'].includes(c.type)) addEdge(c.id+'_a', c.id+'_b', {kind:c.type});
             else if (c.type === 'bulb') addEdge(c.id+'_shell', c.id+'_tip', {kind:c.type});
             else if (c.type === 'switch') addEdge(c.id+'_a', c.id+'_b', {kind:'switch'}); // 预检查时按闭合估算
             else if (c.type === 'ammeter') addEdge(this.meterPositiveKey(c), c.id+'_neg', {kind:'ammeter', comp:c});
@@ -2030,6 +2061,7 @@ class CircuitSimulator {
     recalc() {
         if (this.simulationRunning) this.solveCircuit();
         else this.draw();
+        this.refreshSelectedReadings();
         this.updateCircuitInfo();
         this.refreshClassroom?.();
         this.scheduleAutosave?.();
@@ -2161,10 +2193,11 @@ class CircuitSimulator {
 
     realComponentBox(comp, pad = 20) {
         const p = this.componentPos(comp);
-        const bounds = {battery:[-68,-48,68,48], bulb:[-56,-64,56,48], switch:[-60,-48,60,40],
+        const bounds = {led:[-30,-58,30,62],motor:[-66,-76,66,57],bell:[-52,-76,60,91],battery:[-68,-48,68,48], bulb:[-56,-64,56,48], switch:[-60,-48,60,40],
             resistor:[-34,-14,34,16], potentiometer:[-124,-80,124,82],
             ammeter:[-64,-108,64,81], voltmeter:[-64,-108,64,81]};
-        const [l,t,r,b] = this.viewMode==='schematic'?(comp.type==='potentiometer'?[-49,-30,49,58]:[-33,-25,33,46]):(bounds[comp.type] || [-50,-50,50,50]);
+        const symbols={led:[-40,-43,40,78],motor:[-38,-28,38,65],bell:[-29,-23,29,77]};
+        const [l,t,r,b] = this.viewMode==='schematic'?(symbols[comp.type]||(comp.type==='potentiometer'?[-49,-30,49,58]:[-33,-25,33,46])):(bounds[comp.type] || [-50,-50,50,50]);
         const a=this.componentAngle(comp)*Math.PI/180;
         const size=this.componentSize(comp);
         const pts = [[l,t],[r,t],[r,b],[l,b]].map(([x,y]) => ({x:p.x+size*(x*Math.cos(a)-y*Math.sin(a)),y:p.y+size*(x*Math.sin(a)+y*Math.cos(a))}));
@@ -2192,7 +2225,8 @@ class CircuitSimulator {
         const comp = this.components.find(c=>c.id===compId);
         if (!comp) return pos;
         let dx=0,dy=0;
-        if(this.viewMode==='schematic'){const t=this.terminals(comp).find(t=>t.id===termId);dx=t&&t.x<0?-1:1;}
+        if(this.viewMode==='real'&&['bell','led','motor'].includes(comp.type))dy=1;
+        else if(this.viewMode==='schematic'){const t=this.terminals(comp).find(t=>t.id===termId);dx=t&&t.x<0?-1:1;}
         else if (['ammeter','voltmeter'].includes(comp.type)) dy=1;
         else if (comp.type==='potentiometer' && ['a','b'].includes(termId))dy=1;
         else if (comp.type==='battery') {if(comp.voltage>3)dy=-1;else dx=termId==='pos'?1:-1;}
@@ -2222,7 +2256,7 @@ class CircuitSimulator {
     }
 
     realWireOwnObstruction(c,a,b,w) {
-        const solids={ammeter:[-64,-108,64,20],voltmeter:[-64,-108,64,20],bulb:[-22,-64,22,8],
+        const solids={led:[-24,-54,24,0],motor:[-34,-72,34,25],bell:[-38,-70,38,60],ammeter:[-64,-108,64,20],voltmeter:[-64,-108,64,20],bulb:[-22,-64,22,8],
             resistor:[-24,-9,24,9],switch:[-34,-40,34,8],battery:[-40,-25,40,40],potentiometer:[-66,-18,66,44]};
         const bounds=solids[c.type];if(!bounds)return false;
         const p=this.componentPos(c),angle=-this.componentAngle(c)*Math.PI/180;
@@ -2797,7 +2831,7 @@ class CircuitSimulator {
         ctx.lineWidth = 2; ctx.strokeStyle = this.schematicInk; ctx.fillStyle = this.schematicInk;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         const base = {
-            battery:'Battery', resistor:'Resistor', bulb:'Bulb', switch:'Switch',
+            battery:'Battery', resistor:'Resistor', bulb:'Bulb', switch:'Switch',led:'Led',motor:'Motor',bell:'Bell',
             potentiometer:'Potentiometer', ammeter:'Ammeter', voltmeter:'Voltmeter'
         }[comp.type];
         if (base) {
@@ -2871,11 +2905,10 @@ class CircuitSimulator {
 
     bulbAppearance(comp) {
         const current=this.simulationRunning&&!this.predictionHidden?Math.abs(comp.current||0):0;
-        const rated=Math.max(comp.ratedCurrent||.3,.001),power=current*current*Math.max(comp.resistance||0,0);
-        const ratio=(current/rated)**2;
-        const level=Math.min(1,Math.pow(ratio,.7));
-        return {power,ratio,level,lit:current>1e-4,over:ratio>1.1025,
-            color:ratio<.12?'#aa6034':ratio<.4?'#e99c3a':ratio<.8?'#ffc453':'#fff3b0'};
+        const rated=Math.max(comp.ratedCurrent||.3,.001),power=current*current*Math.max(comp.resistance||0,0),ratio=(current/rated)**2;
+        const level=1-Math.exp(-1.9*Math.pow(ratio,.8));
+        const tint=t=>this.lightColor?this.lightColor(t):`rgb(${Math.round(70+185*t)},${Math.round(20+225*t)},${Math.round(10+180*t)})`;
+        return {power,ratio,level,lit:level>.001,over:ratio>1.1025,color:this.bulbGlassColor?this.bulbGlassColor(level):tint(level),filament:tint(Math.pow(level,.65))};
     }
 
     drawBulbGlow(comp,x,y,radius) {
@@ -3016,10 +3049,10 @@ class CircuitSimulator {
         c.fillStyle='#888';c.fillRect(-11,-17,22,19);c.strokeRect(-11,-17,22,19);
         for(let x=-9;x<12;x+=5){c.fillStyle='#d8e0e6';c.fillRect(x,-16,2,15);}
         const visual=this.drawBulbGlow(comp,0,-36,23);
-        c.fillStyle=visual.lit?visual.color:'#e2f5ff';c.shadowBlur=0;
+        c.fillStyle=visual.lit?visual.color:(this.darkMode?'#627184':'#c8d6df');c.shadowBlur=0;
         c.beginPath();c.arc(0,-36,23,0,7);c.fill();c.stroke();c.shadowBlur=0;
-        c.strokeStyle='#fff';c.lineWidth=4;c.beginPath();c.arc(0,-36,17,-1.8,.1);c.stroke();
-        c.strokeStyle=visual.lit?'#fff4c2':'#b27837';c.lineWidth=visual.lit?1.6+visual.level:1.6;c.beginPath();c.moveTo(-6,-31);c.lineTo(-3,-18);c.lineTo(3,-18);c.lineTo(6,-31);c.stroke();
+        c.save();c.globalAlpha=.4+.6*visual.level;c.strokeStyle='#fff';c.lineWidth=4;c.beginPath();c.arc(0,-36,17,-1.8,.1);c.stroke();c.restore();
+        c.strokeStyle=visual.lit?visual.filament:'#66534b';c.shadowColor=visual.filament;c.shadowBlur=visual.level*14;c.lineWidth=visual.lit?1.6+visual.level:1.6;c.beginPath();c.moveTo(-6,-31);c.lineTo(-3,-18);c.lineTo(3,-18);c.lineTo(6,-31);c.stroke();c.shadowBlur=0;
         this.bindingPost(-42,24);this.bindingPost(42,24);
         this.label(comp,(comp.label||'小灯泡')+(visual.over?'（过载）':''),0,61,{font:'12px Microsoft YaHei',color:visual.over?'#e74c3c':'#333'});
         if(visual.lit)this.label(comp,(visual.power+1e-8).toFixed(2)+' W',0,77,{font:'12px Arial',color:'#7f8c8d'});
@@ -3136,8 +3169,15 @@ class CircuitSimulator {
         switch (c.type) {
             case 'battery': html = num('电压 (V)', c.voltage, 'p-voltage', 0.5, 0); break;
             case 'resistor': html = num('电阻 (Ω)', c.resistance, 'p-res', 1, 0); break;
+            case 'motor':
+            case 'bell':
+            case 'led':
             case 'bulb':
-                html = num('电阻 (Ω)', c.resistance, 'p-res', 1, 0) + num('额定电流 (A)', c.ratedCurrent, 'p-rated', 0.05, 0);
+                html = num(c.type==='led'?'导通动态电阻 (Ω)':'等效电阻 (Ω)', c.resistance, 'p-res', 1, .01) + num('额定电流 (A)', c.ratedCurrent, 'p-rated', c.type==='led'?.001:.01, .001);
+                if(c.type==='led')html+=num('正向压降 (V)',c.forwardVoltage,'p-forward',.1,.1)+'<p>长脚 A 为阳极，短脚 K 为阴极；请串联限流电阻。</p>';
+                if(c.type==='motor')html+='<p>直流电机简化负载，转速为示意；反接反转。</p>';
+                if(c.type==='bell')html+='<p>采用平均负载近似；电铃符号下方两根引脚分别接线。</p>';
+                html+='<p id="p-load-status" role="status"></p>';
                 break;
             case 'switch':
                 html = `<div class="property-control"><label>状态（也可双击开关）</label>
@@ -3154,19 +3194,36 @@ class CircuitSimulator {
                 const active = this.meterActiveTerminal(c);
                 const allTerms = c.type === 'ammeter' ? '−、0.6、3 A' : '−、3、15 V';
                 html = `<div class="property-control"><label>接线柱</label><input value="${allTerms}" readonly></div>
-                    <div class="property-control"><label>当前接入量程</label><input value="${active.label} ${c.type==='ammeter'?'A':'V'}" readonly></div>
-                    <div class="property-control"><label>当前读数</label><input value="${this.predictionHidden?'待揭示':c.type==='ammeter'?c.measurement.toFixed(3)+' A':c.measurement.toFixed(2)+' V'}" readonly></div>
+                    <div class="property-control"><label>当前接入量程</label><input id="p-meter-range" value="${active.label} ${c.type==='ammeter'?'A':'V'}" readonly></div>
+                    <div class="property-control"><label>当前读数</label><input id="p-meter-reading" value="${this.predictionHidden?'待揭示':c.type==='ammeter'?c.measurement.toFixed(3)+' A':c.measurement.toFixed(2)+' V'}" readonly></div>
                     ${c._terminalWarning ? `<div class="badge-warn">${c._terminalWarning}</div>` : ''}
                     ${c.type==='ammeter' && c._polarityWarning && !this.predictionHidden && !this.faultHidden ? '<div class="badge-warn">电流表反接：请让电流从“0.6/3”量程接线柱流入，从“−”接线柱流出。</div>' : ''}`;
                 break;
         }
         props.innerHTML = html;
+        this.refreshSelectedReadings();
         const bind = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
         bind('p-voltage','change', e => { this.saveUndo(); c.voltage = parseFloat(e.target.value)||0; this.recalc(); });
-        bind('p-res','change', e => { this.saveUndo(); c.resistance = parseFloat(e.target.value)||0; this.recalc(); });
-        bind('p-rated','change', e => { this.saveUndo(); c.ratedCurrent = parseFloat(e.target.value)||0.3; this.recalc(); });
+        bind('p-res','change', e => { this.saveUndo(); c.resistance = Math.max(c.type==='led'?.01:0,parseFloat(e.target.value)||0); this.recalc(); });
+        bind('p-forward','change',e=>{this.saveUndo();c.forwardVoltage=Math.min(10,Math.max(.1,Number(e.target.value)||1.8));this.recalc();});
+        bind('p-rated','change', e => { this.saveUndo(); c.ratedCurrent = Math.min(c.type==='led'?1:1e8,Math.max(.001,parseFloat(e.target.value)||COMPONENT_DEFS[c.type].defaults.ratedCurrent||.3)); this.recalc(); });
         bind('p-state','change', e => { this.saveUndo(); c.state = e.target.value; this.recalc(); });
         bind('p-pos','input', e => { if (!c._posUndoSaved) { this.saveUndo(); c._posUndoSaved = true; setTimeout(()=>c._posUndoSaved=false, 250); } c.position = e.target.value/100; document.getElementById('p-pos-val').textContent = e.target.value+'%'; this.recalc(); });
+    }
+
+    refreshSelectedReadings() {
+        const c=this.selectedComponent;if(!c)return;
+        if(['ammeter','voltmeter'].includes(c.type)){
+            const reading=document.getElementById('p-meter-reading'),range=document.getElementById('p-meter-range');
+            if(reading)reading.value=this.predictionHidden?'待揭示':Number(c.measurement||0).toFixed(c.type==='ammeter'?3:2)+(c.type==='ammeter'?' A':' V');
+            if(range)range.value=(c.range||0)+(c.type==='ammeter'?' A':' V');
+        }
+        if(['led','motor','bell'].includes(c.type)){
+            const el=document.getElementById('p-load-status');if(!el)return;
+            const over=Math.abs(c._current||0)>(c.ratedCurrent||1);
+            el.textContent=this.predictionHidden?'运行结果待揭示':!this.simulationRunning?'仿真已暂停':(Math.abs(c._current||0)*1000).toFixed(1)+' mA'+(over?(c.type==='led'?' · 过载，请增加限流电阻':' · 过载'):'');
+            el.className=over&&!this.predictionHidden?'badge-warn':'';
+        }
     }
 
     getComponentName(type) { return COMPONENT_DEFS[type].name; }
@@ -3608,6 +3665,7 @@ window.addEventListener('DOMContentLoaded', () => {
     window.sim = new CircuitSimulator('circuit-canvas');
 });
 </script>
+<script src="devices.js"></script>
 <script src="classroom.js"></script>
 </body>
 </html>
