@@ -284,7 +284,7 @@
             <button class="tool-button" id="toggle-grid">网格</button>
             <button class="tool-button" id="arrange-real" title="整理元件并优化等效接线，保留电表测量支路与变阻器接线柱">整理实物线路</button>
             <button class="tool-button" id="arrange-schematic" title="按连接关系均匀摆放并整理直角导线">整理电路图</button>
-            <button class="tool-button" id="fit-view">⊡ 适应</button>
+            <button class="tool-button" id="fit-view" title="完整显示电路">⊡ 完整显示电路</button>
             <button class="tool-button" id="fullscreen-toggle" aria-pressed="false" title="进入全屏，按 Esc 退出">⛶ 全屏</button>
             <span id="fullscreen-feedback" role="status" hidden></span>
             <button class="tool-button" id="zoom-in">放大＋</button>
@@ -483,17 +483,20 @@ class CircuitSimulator {
     }
 
     /* ---------- 初始化与事件 ---------- */
+    get viewportWidth() { return this.exportingImage?this.canvas.width:(this._canvasWidth??this.canvas.width); }
+    get viewportHeight() { return this.exportingImage?this.canvas.height:(this._canvasHeight??this.canvas.height); }
     resizeCanvas() {
-        const box = document.getElementById('canvas-container');
-        this.canvas.width = box.clientWidth;
-        this.canvas.height = box.clientHeight;
+        const box=document.getElementById('canvas-container');
+        this._canvasWidth=box.clientWidth;this._canvasHeight=box.clientHeight;
+        this.pixelRatio=Math.min(window.devicePixelRatio||1,3);
+        this.canvas.width=Math.round(box.clientWidth*this.pixelRatio);
+        this.canvas.height=Math.round(box.clientHeight*this.pixelRatio);
         this.draw();
     }
 
     setupEventListeners() {
         window.addEventListener('resize', () => {
             this.resizeCanvas();
-            this.fitView(document.getElementById('guide-panel').classList.contains('show') ? 310 : 20);
         });
 
         this.canvas.addEventListener('mousedown', e => this.handleMouseDown(e));
@@ -617,6 +620,7 @@ class CircuitSimulator {
             schematicReference: this.schematicReference,
             realLayoutSignature: this._realLayoutSignature,
             schematicLayoutSignature: this._schematicLayoutSignature,
+            experimentName:this.experimentName||'',
             classroom: this.classroomSnapshot?.()
         });
     }
@@ -639,7 +643,7 @@ class CircuitSimulator {
         this.viewMode = s.viewMode || 'schematic';
         this._realLayoutSignature=s.realLayoutSignature||null;this._schematicLayoutSignature=s.schematicLayoutSignature||null;this._routeKey=null;
         this.panX = s.panX ?? 40; this.panY = s.panY ?? 30; this.scale = s.scale ?? 1;
-        this.activeExperiment = s.activeExperiment ?? null;
+        this.activeExperiment = s.activeExperiment ?? null;this.experimentName=s.experimentName||'';
         this.schematicReference = s.schematicReference || null;
         this.restoreClassroom?.(s.classroom);
         this.selectedComponent = null; this.selectedWire = null; this.wireDrawing = false; this.draftWire = null;
@@ -876,6 +880,7 @@ class CircuitSimulator {
             return;
         }
         if (e.button !== 0) return;
+        if(this.currentTool==='wire' && e.detail>1 && this.findComponentAt(x,y) && !this.findTerminalAt(x,y))return;
 
         if (this.currentTool === 'select') {
             const cp = this.findWireControlPointAt(x, y);
@@ -991,7 +996,14 @@ class CircuitSimulator {
     handleDblClick(e) {
         const {x, y} = this.toWorld(e);
         const comp = this.findComponentAt(x, y);
-        if (comp && comp.type === 'switch') {
+        if (comp && this.currentTool === 'wire' && !this.findTerminalAt(x,y)) {
+            this.wireDrawing=false;this.draftWire=null;this.dragging=false;
+            this.selectedComponent=comp;this.selectedWire=null;
+            document.body?.classList.remove('properties-collapsed');
+            document.getElementById('properties-toggle')?.setAttribute?.('aria-expanded','true');
+            this.updatePropertiesPanel();this.draw();return;
+        }
+        if (comp && comp.type === 'switch' && this.currentTool !== 'wire') {
             this.saveUndo();
             comp.state = comp.state === 'open' ? 'closed' : 'open';
             this.selectedComponent = comp;
@@ -1022,12 +1034,13 @@ class CircuitSimulator {
         }
         this._pinch = null;
         const now = Date.now();
-        if (this._lastTap && now - this._lastTap < 320) {   // 双击 → 开关通断
+        if (this._lastTap && now - this._lastTap < 320 && this._lastTapPoint && Math.hypot(e.touches[0].clientX-this._lastTapPoint.x,e.touches[0].clientY-this._lastTapPoint.y)<18) {   // 双击 → 开关通断
             this._lastTap = 0;
             this.handleDblClick(this.synthMouse(e.touches[0]));
             return;
         }
         this._lastTap = now;
+        this._lastTapPoint={x:e.touches[0].clientX,y:e.touches[0].clientY};
         this.handleMouseDown(this.synthMouse(e.touches[0]));
     }
     handleTouchMove(e) {
@@ -1391,7 +1404,7 @@ class CircuitSimulator {
     }
 
     potCurrentPaths(comp,view) {
-        if(!this.simulationRunning || this.predictionHidden)return [];
+        if(!this.simulationRunning || this.predictionHidden || this.activeWires().some(w=>w._flowAmbiguous&&[w.start.compId,w.end.compId].includes(comp.id)))return [];
         const p=comp.position,paths=[],add=(points,current)=>{if(Math.abs(current)>1e-6)paths.push({points:current>0?points:[...points].reverse(),current:Math.abs(current)});};
         const principle=view==='principle',real=view==='real';
         const left=principle?150:real?-64:-25,right=principle?450:real?64:25;
@@ -1400,8 +1413,8 @@ class CircuitSimulator {
         const resistance=(from,to)=>{const pts=[];const count=Math.max(1,Math.ceil(Math.abs(to-from)/3));for(let i=0;i<=count;i++){const xx=from+(to-from)*i/count;pts.push({x:xx,y:y+(principle?(()=>{const u=(xx-150)/12.5,k=Math.floor(u),t=u-k;return (k%2?28:-28)*t*(1-t);})():0)});}return pts;};
         const aEdge=left,bEdge=right;
         add([{x:ax,y:real?24:y},{x:aEdge,y},...resistance(aEdge,x)],comp._potI1||0);
-        add([{x:bx,y:real?24:y},{x:bEdge,y},...resistance(bEdge,x)],comp._potI2||0);
-        const slider=(comp._potI1||0)+(comp._potI2||0);
+        add([{x:bx,y:real?24:y},{x:bEdge,y},...resistance(bEdge,x)],-(comp._potI2||0));
+        const slider=(comp._potI1||0)-(comp._potI2||0);
         add([{x,y},{x,y:top}],slider);
         for(const term of ['c','d']){
             const flow=this.connectedWireTerminalFlow(comp,term);
@@ -1415,7 +1428,7 @@ class CircuitSimulator {
         for(const path of this.potCurrentPaths(comp,view)){
             ctx.strokeStyle=this.flowColor;ctx.lineWidth=view==='principle'?3:2.5;ctx.lineJoin='round';
             ctx.beginPath();path.points.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.stroke();
-            this.drawFlowDotsOnPolyline(path.points,view==='principle'?32:19,45,3);
+            this.drawFlowDotsOnPolyline(path.points,view==='principle'?32:24,55,3);
         }
         ctx.restore();this.ctx=previous;
     }
@@ -1569,8 +1582,8 @@ class CircuitSimulator {
     handleComponentLibraryClick(e) {
         const data = this.componentDataFromItem(e.currentTarget);
         if (!data || !data.type) return;
-        const x = this.snap((this.canvas.width * 0.5 - this.panX) / this.scale);
-        const y = this.snap((this.canvas.height * 0.5 - this.panY) / this.scale);
+        const x = this.snap((this.viewportWidth * 0.5 - this.panX) / this.scale);
+        const y = this.snap((this.viewportHeight * 0.5 - this.panY) / this.scale);
         this.createComponent(data.type, {
             x, y,
             voltage: data.voltage ? parseFloat(data.voltage) : undefined,
@@ -1676,7 +1689,7 @@ class CircuitSimulator {
 
     clearFlow() {
         this._hasFlow = false;
-        this.wires.forEach(w => { w._flowMag = 0; w._flowDir = 1; });
+        this.wires.forEach(w => { w._flowMag = 0; w._flowDir = 1; w._flowAmbiguous=false; });
         this.components.forEach(c => {
             c._current = 0;
             c._potI1 = 0;
@@ -1737,6 +1750,7 @@ class CircuitSimulator {
         const idx = {}; let n = 0;
         roots.forEach(r => { if (r !== ground) idx[r] = n++; });
         const nodeIdx = key => { const r = find(key); return r === ground ? -1 : idx[r]; };
+        electricalWires.forEach(w=>w._flowNet=find(this.wireEndKey(w,'start')));
 
         // —— 3. 收集电阻支路与电压源 ——
         const resistors = [];  // {k1,k2,R,comp,split?}
@@ -1871,6 +1885,8 @@ class CircuitSimulator {
             if(seen.has(root))continue;
             const order=[root],parents=new Map(),sum=new Map();seen.add(root);
             for(let i=0;i<order.length;i++){const u=order[i];sum.set(u,termFlow[u]||0);for(const edge of adjacency.get(u)||[])if(!seen.has(edge.to)){seen.add(edge.to);parents.set(edge.to,{node:u,wire:edge.wire,component:edge.component,from:edge.from});order.push(edge.to);}}
+            const linkCount=order.reduce((n,u)=>n+(adjacency.get(u)||[]).length,0)/2;
+            if(linkCount>=order.length){for(const u of order)for(const edge of adjacency.get(u)||[])if(edge.wire)edge.wire._flowAmbiguous=true;}
             for(let i=order.length-1;i>0;i--){const u=order[i],edge=parents.get(u),flow=sum.get(u);sum.set(edge.node,(sum.get(edge.node)||0)+flow);
                 if(edge.wire){const signed=flow*(this.wireEndKey(edge.wire,'start')===u?1:-1);edge.wire._flowMag=Math.abs(signed);edge.wire._flowDir=signed>=0?1:-1;if(Math.abs(signed)>1e-5)this._hasFlow=true;}
                 if(edge.component)edge.component._current=flow*(edge.from===u?1:-1);
@@ -2034,8 +2050,9 @@ class CircuitSimulator {
      * ============================================================ */
     draw() {
         const ctx = this.ctx;
-        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        ctx.fillStyle=this.darkMode?'#111827':'#fbfcfd';ctx.fillRect(0,0,this.canvas.width,this.canvas.height);
+        ctx.setTransform(this.exportingImage?1:(this.pixelRatio||1),0,0,this.exportingImage?1:(this.pixelRatio||1),0,0);
+        ctx.clearRect(0, 0, this.viewportWidth, this.viewportHeight);
+        ctx.fillStyle=this.darkMode?'#111827':'#fbfcfd';ctx.fillRect(0,0,this.viewportWidth,this.viewportHeight);
         ctx.save();
         ctx.translate(this.panX, this.panY);
         ctx.scale(this.scale, this.scale);
@@ -2060,9 +2077,10 @@ class CircuitSimulator {
         this.drawPotPrinciple();
 
         ctx.restore();
+        if(this.activeWires().some(w=>w._flowAmbiguous)&&!this.predictionHidden){ctx.save();ctx.fillStyle=this.darkMode?'#ffdda0':'#805510';ctx.font='14px Microsoft YaHei';ctx.fillText('存在理想导线闭环：该连接网电流分配不唯一，已隐藏其流向箭头。',16,22);ctx.restore();}
         if(this.activeWires().some(w=>w._routeBlocked)){
             ctx.save();ctx.fillStyle=this.darkMode?'#ff9999':'#b91c1c';ctx.font='14px Microsoft YaHei';
-            ctx.fillText(this.viewMode==='real'?'线路存在遮挡或交叉，请点击“整理实物线路”。':'元件过近，请点击“整理电路图”。',16,this.canvas.height-18);ctx.restore();
+            ctx.fillText(this.viewMode==='real'?'线路存在遮挡或交叉，请点击“整理实物线路”。':'元件过近，请点击“整理电路图”。',16,this.viewportHeight-18);ctx.restore();
         }
     }
 
@@ -2097,7 +2115,7 @@ class CircuitSimulator {
 
     drawGrid() {
         const ctx = this.ctx, g = this.gridSize;
-        const w = this.canvas.width / this.scale, h = this.canvas.height / this.scale;
+        const w = this.viewportWidth / this.scale, h = this.viewportHeight / this.scale;
         const x0 = -this.panX / this.scale, y0 = -this.panY / this.scale;
         ctx.strokeStyle = this.darkMode?'#243246':'#e8ecef'; ctx.lineWidth = 1;
         for (let x = Math.floor(x0/g)*g; x < x0 + w; x += g) {
@@ -2640,8 +2658,8 @@ class CircuitSimulator {
     }
 
     drawNetworkFlow() {
-        const paths=this.activeWires().map(w=>({w,points:this.viewMode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w)}));
-        const cacheKey=JSON.stringify([this._routeKey,paths.map(p=>[p.w._flowMag,p.w._flowDir,p.points])]);
+        const paths=this.activeWires().filter(w=>!w._flowAmbiguous).map(w=>({w,points:this.viewMode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w)}));
+        const cacheKey=JSON.stringify([this._routeKey,paths.map(p=>[p.w._flowNet,p.w._flowMag,p.w._flowDir,p.points])]);
         if(this._flowGeometryKey===cacheKey){for(const {points,flow} of this._flowGeometry)if(Math.abs(flow)>1e-6)this.drawFlow({_flowDir:flow>=0?1:-1},points);return;}
         const points=paths.flatMap(p=>p.points),segments=new Map(),key=p=>p.x.toFixed(3)+','+p.y.toFixed(3);
         for(const {w,points:pts} of paths)for(let i=1;i<pts.length;i++){
@@ -2649,13 +2667,25 @@ class CircuitSimulator {
             const stops=[a,b,...points.filter(p=>this.distToSeg(p.x,p.y,a,b)<.001)].sort((p,q)=>((p.x-q.x)*(b.x-a.x)+(p.y-q.y)*(b.y-a.y)));
             for(let j=1;j<stops.length;j++){
                 const u=stops[j-1],v=stops[j];if(Math.hypot(v.x-u.x,v.y-u.y)<.001)continue;
-                const forward=key(u)<key(v),id=w._routeNet+':'+(forward?key(u)+'|'+key(v):key(v)+'|'+key(u));
-                if(!segments.has(id))segments.set(id,{points:forward?[u,v]:[v,u],flow:0});
+                const forward=key(u)<key(v),id=w._flowNet+':'+(forward?key(u)+'|'+key(v):key(v)+'|'+key(u));
+                if(!segments.has(id))segments.set(id,{points:forward?[u,v]:[v,u],flow:0,net:w._flowNet});
                 segments.get(id).flow+=(w._flowMag||0)*(w._flowDir||1)*(forward?1:-1);
             }
         }
-        this._flowGeometryKey=cacheKey;this._flowGeometry=[...segments.values()];
-        for(const {points,flow} of segments.values())if(Math.abs(flow)>1e-6)this.drawFlow({_flowDir:flow>=0?1:-1},points);
+        this._flowGeometryKey=cacheKey;this._flowGeometry=this.joinFlowSegments([...segments.values()]);
+        for(const {points,flow} of this._flowGeometry)this.drawFlow({_flowDir:1},points);
+    }
+
+    joinFlowSegments(segments) {
+        const edges=segments.filter(e=>Math.abs(e.flow)>1e-6).map(e=>({...e,points:e.flow>0?e.points:[...e.points].reverse(),flow:Math.abs(e.flow)}));
+        const nodes=new Map(),key=(e,p)=>String(e.net)+':'+p.x.toFixed(3)+','+p.y.toFixed(3);
+        for(const e of edges){e.a=key(e,e.points[0]);e.b=key(e,e.points.at(-1));for(const k of [e.a,e.b]){if(!nodes.has(k))nodes.set(k,[]);nodes.get(k).push(e);}}
+        const used=new Set(),chains=[];
+        const continuation=(e,k)=>{const es=nodes.get(k)||[];if(es.length!==2)return null;const other=es.find(x=>x!==e);return other&&other.a===k&&Math.abs(other.flow-e.flow)<1e-6?other:null;};
+        const walk=first=>{const points=[...first.points];let e=first;used.add(e);while(true){const next=continuation(e,e.b);if(!next||used.has(next))break;points.push(...next.points.slice(1));used.add(next);e=next;}chains.push({points,flow:first.flow});};
+        for(const e of edges){const incoming=(nodes.get(e.a)||[]).find(x=>x!==e&&x.b===e.a);if(!used.has(e)&&(!incoming||continuation(incoming,e.a)!==e))walk(e);}
+        for(const e of edges)if(!used.has(e))walk(e);
+        return chains;
     }
 
     drawRealWire(w, selected) {
@@ -2696,7 +2726,7 @@ class CircuitSimulator {
         const dir = w._flowDir >= 0 ? 1 : -1;
         // dir>0: start→end（off 增大向末端移动）；dir<0 反向
         const ptAt = d => {
-            d = ((d % total) + total) % total;
+            d = Math.max(0,Math.min(total,d));
             for (let i = 1; i < pts.length; i++) {
                 if (d <= cum[i]) {
                     const t = (d - cum[i-1]) / (segLen[i-1] || 1);
@@ -2710,8 +2740,8 @@ class CircuitSimulator {
         ctx.shadowColor = '#f39c12'; ctx.shadowBlur = 0;
         for (let d = off; d < total; d += spacing) {
             const p = ptAt(dir > 0 ? d : total - d);
-            const q=ptAt(Math.max(0,Math.min(total-.001,(dir>0?d:total-d)+dir*2)));
-            this.drawFlowArrow(p,Math.atan2(q.y-p.y,q.x-p.x));
+            const at=dir>0?d:total-d,a=ptAt(Math.max(0,at-.5)),b=ptAt(Math.min(total,at+.5));
+            this.drawFlowArrow(p,Math.atan2((b.y-a.y)*dir,(b.x-a.x)*dir));
         }
         ctx.shadowBlur = 0;
     }
@@ -2726,7 +2756,7 @@ class CircuitSimulator {
         }
         if (total < 1) return;
         const ptAt = d => {
-            d = ((d % total) + total) % total;
+            d = Math.max(0,Math.min(total,d));
             for (let i = 1; i < pts.length; i++) {
                 if (d <= cum[i]) {
                     const t = (d - cum[i-1]) / (segLen[i-1] || 1);
@@ -2737,7 +2767,7 @@ class CircuitSimulator {
         };
         for (let d = (this.flowPhase * speed) % spacing; d < total; d += spacing) {
             const p = ptAt(d);
-            const q=ptAt(Math.min(total-.001,d+2));this.drawFlowArrow(p,Math.atan2(q.y-p.y,q.x-p.x));
+            const a=ptAt(Math.max(0,d-.5)),b=ptAt(Math.min(total,d+.5));this.drawFlowArrow(p,Math.atan2(b.y-a.y,b.x-a.x));
         }
     }
 
@@ -2777,7 +2807,7 @@ class CircuitSimulator {
         }
         // 电流方向箭头（电路图模式）
         if (this.viewMode === 'schematic' && this.simulationRunning && !this.predictionHidden &&
-            (comp.type==='resistor'||comp.type==='bulb'||comp.type==='voltmeter') && Math.abs(comp._current) > 1e-9)
+            (comp.type==='resistor'||comp.type==='bulb'||comp.type==='voltmeter') && Math.abs(comp._current) > 1e-6)
             this.drawCurrentArrow(comp);
         this.drawFaultComponent?.(comp);
         ctx.restore();
@@ -3042,7 +3072,7 @@ class CircuitSimulator {
         this.drawSVG('meter-'+letter,meterFaceSVG(config),-84,-84,168,172.8);
         const fraction=this.simulationRunning?Math.max(-.08,Math.min(1.08,(comp.measurement||0)/(comp.range||1))):0;
         const angle=(-140+100*fraction)*Math.PI/180;
-        ctx.strokeStyle='#282522';ctx.lineWidth=.8;ctx.beginPath();ctx.moveTo(0,-4.8);
+        ctx.strokeStyle='#111';ctx.lineWidth=1.25;ctx.beginPath();ctx.moveTo(0,-4.8);
         if (!this.predictionHidden) { ctx.lineTo(272*.24*Math.cos(angle),-4.8+272*.24*Math.sin(angle));ctx.stroke(); }
         else this.label(comp,'?',0,-32,{font:'bold 30px Arial',color:'#64748b'});
         if(comp.label)this.label(comp,comp.label,0,this.viewMode==='real'?98:28,{font:'bold 15px Georgia'});
@@ -3156,6 +3186,7 @@ class CircuitSimulator {
 
     // 自动缩放定位，使全部元件落在可视区（leftMargin 留给引导面板）
     fitView(leftMargin = 20) {
+        if(window.innerWidth<1100 || window.innerHeight<700)leftMargin=20;
         if (!this.components.length) { this.panX = 40; this.panY = 30; this.scale = 1; this.draw(); return; }
         let minX=1e9, minY=1e9, maxX=-1e9, maxY=-1e9;
         this.components.forEach(c => {
@@ -3165,8 +3196,8 @@ class CircuitSimulator {
         this.activeWires().forEach(w=>{const pts=this.viewMode==='real'?this.resolveRealWire(w):this.resolveWire(w);pts.forEach(p=>{
             minX=Math.min(minX,p.x-12);maxX=Math.max(maxX,p.x+12);minY=Math.min(minY,p.y-12);maxY=Math.max(maxY,p.y+12);
         });});
-        const availW = Math.max(100, this.canvas.width - leftMargin - 20);
-        const availH = Math.max(100, this.canvas.height - 40);
+        const availW = Math.max(100, this.viewportWidth - leftMargin - 20);
+        const availH = Math.max(100, this.viewportHeight - 40);
         const w = maxX-minX, h = maxY-minY;
         this.scale = Math.max(0.15, Math.min(availW/w, availH/h, 1.4));
         this.panX = leftMargin - minX*this.scale + (availW - w*this.scale)/2;
@@ -3177,7 +3208,7 @@ class CircuitSimulator {
     clearAll() {
         this.saveUndo();
         this.restoreClassroom?.();
-        this.components = []; this.wires = [];
+        this.components = []; this.wires = [];this.experimentName='';
         this.activeExperiment = null; this.schematicReference = null;this._realLayoutSignature=null;this._schematicLayoutSignature=null;this._routeKey=null;
         this.selectedComponent = null; this.selectedWire = null;
         this.wireDrawing = false; this.draftWire = null;
@@ -3218,7 +3249,7 @@ class CircuitSimulator {
         this.prepareExperimentViews();this.viewMode=mode;
         this.suppressUndo = false;
         this.components.forEach(c => { c.realX = c.realX ?? c.x; c.realY = c.realY ?? c.y; });
-        this.activeExperiment = i;
+        this.activeExperiment = i;this.experimentName=exp.title;
         this._routeKey=null;
         this.recalc();
         this.updatePropertiesPanel();
@@ -3546,18 +3577,18 @@ document.querySelectorAll('.component-item .ico').forEach(el => {
 function meterFaceSVG(config) {
  const prefix='meter';
  const point=(r,n)=>{const a=(-140+n*100/30)*Math.PI/180;return [350+r*Math.cos(a),330+r*Math.sin(a)];};
- const line=(a,b,w=2)=>`<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="#282522" stroke-width="${w}"/>`;
+ const line=(a,b,w=3.6)=>`<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="#111" stroke-width="${w}"/>`;
     let svg = `<defs><linearGradient id="${prefix}Metal"><stop stop-color="#777"/><stop offset=".4" stop-color="#eee"/><stop offset=".65" stop-color="#aaa"/><stop offset="1" stop-color="#666"/></linearGradient><linearGradient id="${prefix}Red"><stop stop-color="#a81716"/><stop offset=".4" stop-color="#ff7751"/><stop offset=".65" stop-color="#d3211c"/><stop offset="1" stop-color="#981414"/></linearGradient><pattern id="${prefix}Texture" width="8" height="8" patternUnits="userSpaceOnUse"><path d="M0 8L4 0L8 8" fill="#ddd" stroke="#bbb" stroke-width=".5"/></pattern></defs>
       <path d="M110 425H590L616 655V684H542Q539 662 520 662H180Q161 662 158 684H84V655Z" fill="#cbdbe6" stroke="#302d2b" stroke-width="3"/>
       <path d="M106 439H594L596 464H103Z M87 635H613V651H87Z" fill="#96a5bb"/>
       <rect x="91" y="28" width="518" height="413" rx="14" fill="#ddd" stroke="#302d2b" stroke-width="3"/>
       <rect x="102" y="42" width="496" height="393" rx="9" fill="#fff"/>
       <path d="M128 532H572L586 620H114Z" fill="#54b786" stroke="white" stroke-width="9"/>`;
-    for (let i=0;i<=30;i++) svg += line(point(237,i),point(i%10===0?266:i%5===0?258:250,i),i%10===0?3:2);
+    for (let i=0;i<=30;i++) svg += line(point(228,i),point(i%10===0?260:i%5===0?255:250,i),i%10===0?5:3.6);
     for (let i=0;i<=3;i++) {
-      for (const [radius,label,size] of [[285,String(i*config.large/3),31],[207,String(Number((i*config.small/3).toFixed(1))),29]]) {
+      for (const [radius,label,size] of [[279,String(i*config.large/3),40],[193,String(Number((i*config.small/3).toFixed(1))),40]]) {
         const [x,y]=point(radius,i*10), angle=-50+i*100/3;
-        svg+=`<text x="${x}" y="${y}" transform="rotate(${angle} ${x} ${y})" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="${size}" fill="#282522">${label}</text>`;
+        svg+=`<text x="${x}" y="${y}" transform="rotate(${angle} ${x} ${y})" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="${size}" font-weight="600" fill="#111">${label}</text>`;
       }
     }
     svg+=`<text x="350" y="247" text-anchor="middle" font-family="Arial,sans-serif" font-size="54" fill="#282522">${config.unit}</text><path d="M335 257H365" stroke="#282522" stroke-width="3"/>

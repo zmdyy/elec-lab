@@ -31,7 +31,7 @@ function validateGraph(graph) {
   if(c.label!==undefined)requireValid(typeof c.label==='string'&&c.label.length<=80,'元件名称过长。');
   for(const k of ['realFlipX','schematicFlipX'])if(c[k]!==undefined)requireValid(typeof c[k]==='boolean','元件朝向无效。');
   if(c.potUpperSide!==undefined)requireValid([-1,1].includes(c.potUpperSide),'变阻器引线位置无效。');
-  if(c.potContactMode!==undefined)requireValid(['auto','pinned'].includes(c.potContactMode),'变阻器接线方式无效。');
+  if(c.potContactMode!==undefined)requireValid(['auto','pinned','mapped'].includes(c.potContactMode),'变阻器接线方式无效。');
   if(c.fault!==undefined)requireValid((['resistor','bulb'].includes(c.type)&&['open','short'].includes(c.fault))||(c.type==='ammeter'&&c.fault==='reverse'),'元件故障类型无效。');
   ids.set(c.id,c);return c;
  });
@@ -82,13 +82,14 @@ function validateExperiment(input) {
  requireValid(finite(camera.panX)&&finite(camera.panY)&&finite(camera.scale,.05,5),'画布显示比例无效。');
  requireValid(input.activeExperiment==null||(Number.isInteger(input.activeExperiment)&&input.activeExperiment>=0&&input.activeExperiment<EXPERIMENTS.length),'内置实验编号无效。');
  requireValid(typeof input.darkMode==='boolean'&&typeof input.showGrid==='boolean'&&typeof input.showPotPrinciple==='boolean','显示设置无效。');
- return {...graph,idCounter:input.idCounter??nextId,format:input.format,version:1,viewMode:input.viewMode,camera:{panX:camera.panX,panY:camera.panY,scale:camera.scale},activeExperiment:input.activeExperiment??null,schematicReference:reference,darkMode:input.darkMode,showGrid:input.showGrid,showPotPrinciple:input.showPotPrinciple,classroom:validateClassroom(input.classroom)};
+ requireValid(input.name===undefined||(typeof input.name==='string'&&input.name.length<=80),'实验名称过长。');
+ return {...graph,name:input.name||'',idCounter:input.idCounter??nextId,format:input.format,version:1,viewMode:input.viewMode,camera:{panX:camera.panX,panY:camera.panY,scale:camera.scale},activeExperiment:input.activeExperiment??null,schematicReference:reference,darkMode:input.darkMode,showGrid:input.showGrid,showPotPrinciple:input.showPotPrinciple,classroom:validateClassroom(input.classroom)};
 }
 Object.assign(CircuitSimulator.prototype, {
  initClassroom() {
   this.restoreClassroom();this._classroomReady=true;
   const bar=document.createElement('div');bar.className='classroom-toolbar';
-  bar.innerHTML=`<button class="tool-button" id="experiment-file-btn">保存 / 打开</button><button class="tool-button" id="export-image-btn">导出图片</button><button class="tool-button" id="record-btn">实验记录</button><button class="tool-button" id="prediction-btn" aria-pressed="false">课堂预测</button><button class="tool-button" id="fault-btn">故障探究</button><span id="classroom-status" role="status">自动保存已开启</span>`;
+  bar.innerHTML=`<button class="tool-button" id="experiment-file-btn">导出实验</button><button class="tool-button" id="import-experiment-btn">导入实验</button><button class="tool-button" id="meter-zoom-btn">放大读表</button><button class="tool-button" id="library-toggle" aria-expanded="true">元件库</button><button class="tool-button" id="properties-toggle" aria-expanded="true">属性面板</button><button class="tool-button" id="export-image-btn">导出图片</button><button class="tool-button" id="record-btn">实验记录</button><button class="tool-button" id="prediction-btn" aria-pressed="false">课堂预测</button><button class="tool-button" id="fault-btn">故障探究</button><span id="classroom-status" role="status">自动保存已开启</span>`;
   const main=document.querySelector('.main-content');main.insertBefore(bar,byId('canvas-container'));
   const prediction=document.createElement('div');prediction.id='prediction-banner';prediction.hidden=true;prediction.setAttribute('role','status');main.insertBefore(prediction,byId('canvas-container'));
   const recovery=document.createElement('div');recovery.id='recovery-banner';recovery.hidden=true;main.insertBefore(recovery,byId('canvas-container'));
@@ -96,23 +97,30 @@ Object.assign(CircuitSimulator.prototype, {
   dialog.querySelector('.dialog-close').onclick=()=>dialog.close();dialog.addEventListener('close',()=>this._dialogKind=null);
   dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}});
   const message=document.createElement('div');message.id='classroom-message';message.hidden=true;message.setAttribute('role','status');document.body.appendChild(message);
-  byId('experiment-file-btn').onclick=()=>this.openFileDialog();byId('export-image-btn').onclick=()=>this.openExportDialog();byId('record-btn').onclick=()=>this.openRecordsDialog();byId('prediction-btn').onclick=()=>{if(this.predictionHidden){this.predictionHidden=false;this.updatePropertiesPanel();this.recalc();this.updateMiniSchematicVisibility();}else this.openPredictionDialog();};byId('fault-btn').onclick=()=>this.openFaultDialog();
+  byId('experiment-file-btn').onclick=()=>this.openFileDialog();
+  byId('import-experiment-btn').onclick=()=>{this.openFileDialog();byId('load-experiment').click();};
+  byId('meter-zoom-btn').onclick=()=>this.openMeterDialog();
+  for(const [selector,cls] of [['.component-library','library-collapsed'],['.properties-panel','properties-collapsed']]){const close=document.createElement('button');close.className='panel-close';close.textContent='收起';close.onclick=()=>{document.body.classList.add(cls);byId(cls==='library-collapsed'?'library-toggle':'properties-toggle').setAttribute('aria-expanded','false');this.resizeCanvas();};document.querySelector(selector).prepend(close);}
+  const miniTitle=document.querySelector('#schematic-mini .mini-title');miniTitle.textContent='参考电路图 · 点击收起 / 展开';miniTitle.style.cursor='pointer';miniTitle.tabIndex=0;miniTitle.setAttribute('role','button');miniTitle.setAttribute('aria-expanded','true');const toggleMini=()=>{const closed=byId('schematic-mini').classList.toggle('mini-collapsed');miniTitle.setAttribute('aria-expanded',String(!closed));};miniTitle.onclick=toggleMini;miniTitle.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleMini();}};
+  for(const [id,cls] of [['library-toggle','library-collapsed'],['properties-toggle','properties-collapsed']])byId(id).onclick=()=>{const collapsed=document.body.classList.toggle(cls);byId(id).setAttribute('aria-expanded',String(!collapsed));this.resizeCanvas();};
+  if(window.innerWidth<1100){document.body.classList.add('library-collapsed','properties-collapsed');byId('library-toggle').setAttribute('aria-expanded','false');byId('properties-toggle').setAttribute('aria-expanded','false');}
+  byId('export-image-btn').onclick=()=>this.openExportDialog();byId('record-btn').onclick=()=>this.openRecordsDialog();byId('prediction-btn').onclick=()=>{if(this.predictionHidden){this.predictionHidden=false;this.updatePropertiesPanel();this.recalc();this.updateMiniSchematicVisibility();}else this.openPredictionDialog();};byId('fault-btn').onclick=()=>this.openFaultDialog();
   try {const saved=localStorage.getItem(STORAGE_KEY);if(saved){const restored=validateExperiment(JSON.parse(saved));this._recoveryData=restored;this._recoveryPending=true;this.renderRecovery();}}catch(_){byId('classroom-status').textContent='上次缓存无法读取，可打开已保存的文件。';}
   document.addEventListener('pointerup',()=>this.scheduleAutosave());
   this.canvas.addEventListener('wheel',()=>this.scheduleAutosave(),{passive:true});
   window.addEventListener('pagehide',()=>this.flushAutosave());
-  if(typeof ResizeObserver!=='undefined'){this._canvasObserver=new ResizeObserver(()=>{const box=byId('canvas-container');if(this.canvas.width!==box.clientWidth||this.canvas.height!==box.clientHeight)this.resizeCanvas();});this._canvasObserver.observe(byId('canvas-container'));}
+  if(typeof ResizeObserver!=='undefined'){this._canvasObserver=new ResizeObserver(()=>{const box=byId('canvas-container');if(this._canvasWidth!==box.clientWidth||this._canvasHeight!==box.clientHeight)this.resizeCanvas();});this._canvasObserver.observe(byId('canvas-container'));}
   this.resizeCanvas();this.refreshClassroom();
  },
  classroomSnapshot() {return {records:clone(this.records||[]),recordU:this.recordU??null,recordI:this.recordI??null,predictionHidden:!!this.predictionHidden,predictionText:this.predictionText||'',faultHidden:!!this.faultHidden};},
  restoreClassroom(raw) {Object.assign(this,raw?clone(raw):blankClassroom());this._solutionState='unknown';this._mainMeasurements=null;this._currentSeries=null;},
  experimentData() {
-  return {format:'elec-lab-experiment',version:1,savedAt:new Date().toISOString(),idCounter:this.idCounter,components:this.components.map(cleanComponent),wires:this.wires.map(cleanWire),viewMode:this.viewMode,camera:{panX:this.panX,panY:this.panY,scale:this.scale},activeExperiment:this.activeExperiment??null,schematicReference:this.schematicReference?{components:this.schematicReference.components.map(cleanComponent),wires:this.schematicReference.wires.map(cleanWire)}:null,darkMode:!!this.darkMode,showGrid:!!this.showGrid,showPotPrinciple:!!this.showPotPrinciple,classroom:this.classroomSnapshot()};
+  return {format:'elec-lab-experiment',version:1,name:this.experimentName||'',savedAt:new Date().toISOString(),idCounter:this.idCounter,components:this.components.map(cleanComponent),wires:this.wires.map(cleanWire),viewMode:this.viewMode,camera:{panX:this.panX,panY:this.panY,scale:this.scale},activeExperiment:this.activeExperiment??null,schematicReference:this.schematicReference?{components:this.schematicReference.components.map(cleanComponent),wires:this.schematicReference.wires.map(cleanWire)}:null,darkMode:!!this.darkMode,showGrid:!!this.showGrid,showPotPrinciple:!!this.showPotPrinciple,classroom:this.classroomSnapshot()};
  },
  importExperiment(input) {
   const data=validateExperiment(input); // Validate completely before changing the current experiment.
   this.saveUndo();this.components=data.components;this.wires=data.wires;
-  this.idCounter=data.idCounter;
+  this.idCounter=data.idCounter;this.experimentName=data.name;
   this.viewMode=data.viewMode;Object.assign(this,data.camera);this.activeExperiment=data.activeExperiment;this.schematicReference=data.schematicReference;
   this.darkMode=data.darkMode;this.showGrid=data.showGrid;this.showPotPrinciple=data.showPotPrinciple;this.restoreClassroom(data.classroom);
   this._realLayoutSignature=null;this._schematicLayoutSignature=null;this._routeKey=null;this._routes=null;this._flowGeometryKey=null;
@@ -149,11 +157,30 @@ Object.assign(CircuitSimulator.prototype, {
   const d=byId('classroom-dialog');this._dialogKind=kind;byId('classroom-dialog-title').textContent=title;d.querySelector('.dialog-body').innerHTML='<p id="classroom-dialog-message" role="status" class="classroom-dialog-feedback" hidden></p>'+markup;if(!d.open)d.showModal();
  },
  downloadBlob(blob,name) {const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);},
- fileName(ext) {return '电学实验-'+new Date().toISOString().replace(/[:.]/g,'-')+'.'+ext;},
+ fileName(ext) {
+  const date=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date()).replace(/[-: ]/g,'');
+  const name=(this.experimentName||'电学实验').replace(/[\\/:*?"<>|\x00-\x1f]/g,'_').trim().slice(0,80)||'电学实验';
+  return name+'_'+date+'.'+ext;
+ },
  openFileDialog() {
-  this.showClassroomDialog('file','保存与恢复实验',`<p>保存两个视图的元件位置、接线柱、参数、课堂模式及记录数据。</p><div class="classroom-actions"><button class="primary" id="save-experiment">下载实验文件</button><label><input id="load-experiment" type="file" accept=".json,application/json" aria-label="打开实验文件"></label></div><p class="classroom-note">打开文件会替换当前实验，可用“撤销”恢复。自动保存保存在当前浏览器；跨电脑使用请下载 JSON 文件。</p><p id="file-result" role="status"></p>`);
-  byId('save-experiment').onclick=()=>{try{const data=this.experimentData();validateExperiment(data);const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});requireValid(blob.size<=MAX_FILE_BYTES,'记录数据过多，请先导出 CSV 并清空记录，再保存实验。');this.downloadBlob(blob,this.fileName('json'));this.flushAutosave();byId('file-result').textContent='实验文件已生成。';}catch(e){byId('file-result').textContent='保存失败：'+e.message;}};
-  byId('load-experiment').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{requireValid(f.size<=MAX_FILE_BYTES,'文件过大，最多支持 2 MB。');const data=JSON.parse(await f.text());this.importExperiment(data);byId('classroom-dialog').close();this.notify('已打开实验，原实验可通过“撤销”恢复。');}catch(error){byId('file-result').textContent='打开失败：'+error.message;}finally{e.target.value='';}};
+  this.showClassroomDialog('file','保存与恢复实验',`<p>保存两个视图的元件位置、接线柱、参数、课堂模式及记录数据。换电脑后导入此文件即可继续实验。</p><div class="classroom-fields"><label>实验名称<input id="experiment-name" maxlength="80" value="${escape(this.experimentName||'')}" placeholder="例如：并联电路电流规律"></label></div><div class="classroom-actions"><button class="primary" id="save-experiment">下载实验文件</button><label>导入实验<input id="load-experiment" type="file" accept=".json,application/json" aria-label="打开实验文件"></label></div><p class="classroom-note">打开文件会替换当前实验，可用“撤销”恢复。自动保存保存在当前浏览器；跨电脑使用请下载 JSON 文件。</p><p id="file-result" role="status"></p>`);
+  byId('save-experiment').onclick=()=>{try{this.experimentName=byId('experiment-name').value.trim();const data=this.experimentData();validateExperiment(data);const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});requireValid(blob.size<=MAX_FILE_BYTES,'记录数据过多，请先导出 CSV 并清空记录，再保存实验。');this.downloadBlob(blob,this.fileName('json'));this.flushAutosave();byId('file-result').textContent='实验文件已生成。';}catch(e){byId('file-result').textContent='保存失败：'+e.message;}};
+  byId('load-experiment').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{requireValid(f.size<=MAX_FILE_BYTES,'文件过大，最多支持 2 MB。');const data=JSON.parse(await f.text());this.importExperiment(data);byId('classroom-dialog').close();this.resizeCanvas();this.fitView(byId('guide-panel').classList.contains('show')?310:20);this.notify('已打开实验，原实验可通过“撤销”恢复。');}catch(error){byId('file-result').textContent='打开失败：'+error.message;}finally{e.target.value='';}};
+ },
+ openMeterDialog() {
+  const meters=this.components.filter(c=>['ammeter','voltmeter'].includes(c.type));
+  if(!meters.length){this.notify('请先添加电流表或电压表。');return;}
+  const selected=meters.includes(this.selectedComponent)?this.selectedComponent:meters[0];
+  this.showClassroomDialog('meter','放大读表',`<div class="classroom-fields"><label>选择电表<select id="zoom-meter">${meters.map(c=>`<option value="${escape(c.id)}" ${c===selected?'selected':''}>${escape(c.label||COMPONENT_DEFS[c.type].name)} · ${escape(c.id)}</option>`).join('')}</select></label></div><canvas id="meter-detail" width="900" height="620" style="display:block;width:100%;max-height:65vh;object-fit:contain"></canvas><p class="classroom-note">与实验中的量程、指针及读数同步；调整参数后可重新打开读表。</p>`);
+  const render=async()=>{
+   const c=this.components.find(c=>c.id===byId('zoom-meter')?.value);if(!c)return;
+   const canvas=byId('meter-detail'),ctx=canvas.getContext('2d');
+   const art=this._art?.get('meter-'+(c.type==='ammeter'?'A':'V'));if(art?.decode)await art.decode();
+   if(!canvas.isConnected)return;
+   ctx.clearRect(0,0,900,620);ctx.save();ctx.translate(450,305);ctx.scale(2.8,2.8);ctx.textBaseline='middle';
+   const previous=this.ctx;this.ctx=ctx;try{this.drawMeterReal(c,c.type==='ammeter'?'A':'V');}finally{this.ctx=previous;ctx.restore();}
+  };
+  byId('zoom-meter').onchange=render;render();
  },
  imageBounds() {
   requireValid(this.components.length>0,'请先放入元件。');
