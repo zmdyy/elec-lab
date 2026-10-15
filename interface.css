@@ -1,0 +1,32 @@
+body .toolbar.compact-toolbar {display:flex;flex-direction:column;align-items:stretch;gap:0;padding:0;overflow:visible;flex-shrink:0;min-height:0;z-index:6;}
+.control-row {display:flex;align-items:center;gap:7px;padding:7px 10px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin;}
+.control-row>* {flex-shrink:0;}
+.secondary-controls {background:#e9f2f9;border-top:1px solid #ccd8e5;}
+body.dark .secondary-controls {background:#203044;border-color:#42536a;}
+body #classroom-status {width:auto;margin-left:auto;font-size:12px;color:#536478;white-space:nowrap;}
+body.dark #classroom-status {color:#bdcde0;}
+body .control-menu {position:fixed;z-index:1000;min-width:185px;max-width:calc(100vw - 16px);padding:5px;background:#fff;border:1px solid #cbd5e1;overflow:auto;}
+body #exp-menu.control-menu {min-width:min(290px,calc(100vw - 16px));}
+body .control-menu .tool-button {display:block;width:100%;text-align:left;padding:10px 12px;box-shadow:none;background:transparent;color:#25364a;transform:none;}
+body .control-menu .tool-button:hover,body .control-menu [role=button]:focus {background:#eaf4fb;}
+body .control-menu .tool-button[aria-pressed=true],body .control-menu .tool-button.active {background:#d6f5e3;color:#14532d;}
+body .control-menu .warning {color:#b91c1c;}
+body.dark .control-menu {background:#1e293b;border-color:#52647d;}
+body.dark .control-menu .tool-button {color:#e2e8f0;}
+body.dark .control-menu .tool-button:hover,body.dark .control-menu [role=button]:focus {background:#334155;}
+body.dark .control-menu .tool-button[aria-pressed=true],body.dark .control-menu .tool-button.active {background:#14532d;color:#dcfce7;}
+.selection-actions {display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;}
+.selection-actions [hidden] {display:none;}
+.component-naming {margin-bottom:14px;}
+.component-naming #restore-auto-name {font-size:12px;padding:6px 9px;}
+.canvas-status {position:absolute;bottom:10px;left:10px;pointer-events:none;z-index:2;font-size:11px;padding:4px 7px;}
+#fullscreen-feedback {position:absolute;bottom:40px;left:10px;background:#334155;padding:6px;border-radius:5px;z-index:3;}
+#recovery-dialog {max-width:440px;width:calc(100vw - 48px);border:1px solid #94a3b8;border-radius:12px;padding:22px;color:#25364a;box-shadow:0 16px 60px #0005;}
+#recovery-dialog::backdrop {background:#0f172a80;}
+#recovery-dialog h2 {font-size:20px;margin:0 0 14px;}
+#recovery-dialog p {line-height:1.8;}
+.recovery-actions {display:flex;flex-wrap:wrap;gap:10px;margin-top:20px;}
+#recover-last {background:#15803d;color:white;}
+body.dark #recovery-dialog {background:#1e293b;color:#e2e8f0;}
+@media(max-width:1200px){body .compact-toolbar .tool-button {padding:7px 9px;font-size:12px;}.control-row{gap:5px;padding:6px;}}
+@media(max-width:600px){.control-row{gap:5px;padding:5px;min-height:42px;}body .compact-toolbar .tool-button{padding:8px 10px;font-size:13px;}.control-row:after{content:'';width:3px;flex-shrink:0;}#classroom-status{padding-right:8px;}}

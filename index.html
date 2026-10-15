@@ -205,6 +205,7 @@
     body.dark #mode-modal p,body.dark .menu-dropdown div small { color:#bac8d8; }
     body.dark #mode-modal .choice { border-color:#52637a; }
 </style>
+<link rel="stylesheet" href="interface.css">
 </head>
 <body>
 <div class="simulator-container">
@@ -264,7 +265,7 @@
             ② 点「导线」→ 点接线柱A → 点接线柱B 连线<br>
             ③ 点元件可在右侧改参数<br>
             ④ 选中后按 <b>R</b> 旋转、<b>Del</b> 删除<br>
-            ⑤ 选择模式双击开关可通断
+            ⑤ 单击开关手柄通断，双击底座选中
         </div>
     </div>
 
@@ -348,7 +349,7 @@
 <div id="mode-modal">
     <div class="box">
         <h2>⚡ 欢迎来到电学实验室</h2>
-        <p>请选择你的操作方式（可随时在右上角切换重选）</p>
+        <p>请选择你的操作方式（可随时在“显示”菜单中切换重选）</p>
         <div class="choices">
             <div class="choice" data-mode="mouse">
                 <div class="emo">🖱️</div>
@@ -522,6 +523,8 @@ class CircuitSimulator {
         this.canvas.addEventListener('mousedown', e => this.handleMouseDown(e));
         this.canvas.addEventListener('mousemove', e => this.handleMouseMove(e));
         this.canvas.addEventListener('mouseup', e => this.handleMouseUp(e));
+        window.addEventListener('mouseup',e=>{if(this._switchPress)this.handleMouseUp(e);});
+        this.canvas.addEventListener('touchcancel',()=>{this._switchPress=null;this.dragging=false;this._lastTap=0;});
         this.canvas.addEventListener('wheel', e => this.handleWheel(e), {passive:false});
         this.canvas.addEventListener('dblclick', e => this.handleDblClick(e));
         this.canvas.addEventListener('contextmenu', e => this.handleContextMenu(e));
@@ -891,6 +894,25 @@ class CircuitSimulator {
     snap(v) { return Math.round(v / this.gridSize) * this.gridSize; }
 
     /* ---------- 鼠标事件 ---------- */
+    switchHandleAt(x,y) {
+        const c=this.findComponentAt(x,y);if(c?.type!=='switch')return null;
+        const terminal=this.findTerminalAt(x,y);
+        if(terminal&&Math.hypot(terminal.x-x,terminal.y-y)<(this.inputMode==='touch'?14:10)*this.componentSize(c))return null;
+        const p=this.componentPos(c),a=this.componentAngle(c)*Math.PI/180,k=this.componentSize(c);
+        let lx=((x-p.x)*Math.cos(a)+(y-p.y)*Math.sin(a))/k;
+        let ly=(-(x-p.x)*Math.sin(a)+(y-p.y)*Math.cos(a))/k;
+        if(this.viewMode==='real'?c.realFlipX:c.schematicFlipX)lx=-lx;
+        if(this.viewMode==='real'){
+            const angle=c.state==='closed'?0:.36,dx=lx-28,dy=ly+10;
+            lx=dx*Math.cos(angle)+dy*Math.sin(angle);ly=-dx*Math.sin(angle)+dy*Math.cos(angle);
+            return lx>=-86&&lx<=-22&&Math.abs(ly)<=12?c:null;
+        }
+        const end=c.state==='closed'?{x:18,y:0}:{x:14,y:-17};
+        // Interior of the blade only: both terminal circles remain wiring targets.
+        const dx=end.x+18,dy=end.y,t=((lx+18)*dx+ly*dy)/(dx*dx+dy*dy);
+        return t>.24&&t<.85&&Math.hypot(lx-(-18+t*dx),ly-t*dy)<7?c:null;
+    }
+
     handleMouseDown(e) {
         const {x, y} = this.toWorld(e);
         this.lastMousePos = {x, y};
@@ -903,6 +925,8 @@ class CircuitSimulator {
             return;
         }
         if (e.button !== 0) return;
+        const handle=this.switchHandleAt(x,y);
+        if(handle){this._switchPress={comp:handle,x:e.clientX,y:e.clientY,moved:false};return;}
         if(this.currentTool==='wire' && e.detail>1 && this.findComponentAt(x,y) && !this.findTerminalAt(x,y))return;
 
         if (this.currentTool === 'select') {
@@ -970,6 +994,10 @@ class CircuitSimulator {
         const {x, y} = this.toWorld(e);
         this.lastMousePos = {x, y};
 
+        if(this._switchPress){
+            if(Math.hypot(e.clientX-this._switchPress.x,e.clientY-this._switchPress.y)>6)this._switchPress.moved=true;
+            return;
+        }
         if (this.isPanning) {
             this.panX += e.clientX - this.lastPanPoint.x;
             this.panY += e.clientY - this.lastPanPoint.y;
@@ -998,6 +1026,14 @@ class CircuitSimulator {
     }
 
     handleMouseUp(e) {
+        const press=this._switchPress;this._switchPress=null;
+        if(press&&!press.moved&&Math.hypot(e.clientX-press.x,e.clientY-press.y)<=6){
+            const p=this.toWorld(e);
+            if(this.switchHandleAt(p.x,p.y)===press.comp){
+                this.saveUndo();press.comp.state=press.comp.state==='open'?'closed':'open';
+                this.updatePropertiesPanel();this.recalc();
+            }
+        }
         this.dragging = false;
         this.draggingControlPoint = null;
         this.isPanning = false;
@@ -1017,22 +1053,13 @@ class CircuitSimulator {
     }
 
     handleDblClick(e) {
-        const {x, y} = this.toWorld(e);
-        const comp = this.findComponentAt(x, y);
-        if (comp && this.currentTool === 'wire' && !this.findTerminalAt(x,y)) {
-            this.wireDrawing=false;this.draftWire=null;this.dragging=false;
-            this.selectedComponent=comp;this.selectedWire=null;
-            document.body?.classList.remove('properties-collapsed');
-            document.getElementById('properties-toggle')?.setAttribute?.('aria-expanded','true');
-            this.updatePropertiesPanel();this.draw();return;
-        }
-        if (comp && comp.type === 'switch' && this.currentTool !== 'wire') {
-            this.saveUndo();
-            comp.state = comp.state === 'open' ? 'closed' : 'open';
-            this.selectedComponent = comp;
-            this.updatePropertiesPanel();
-            this.recalc();
-        }
+        const {x,y}=this.toWorld(e),comp=this.findComponentAt(x,y);
+        if(!comp||this.findTerminalAt(x,y)||this.switchHandleAt(x,y))return;
+        this.wireDrawing=false;this.draftWire=null;this.dragging=false;
+        this.selectedComponent=comp;this.selectedWire=null;
+        document.body?.classList.remove('properties-collapsed');
+        document.getElementById('properties-toggle')?.setAttribute?.('aria-expanded','true');
+        this.updatePropertiesPanel();this.draw();
     }
 
     /* ---------- 触屏事件 ---------- */
@@ -1050,14 +1077,19 @@ class CircuitSimulator {
         e.preventDefault();
         this.hideContextMenu();
         if (e.touches.length === 2) {            // 双指缩放/平移
+            this._switchPress=null;this._lastTap=0;
             this.dragging = false; this.isPanning = false;
             this.wireDrawing = false; this.draftWire = null;
             this._pinch = this.pinchInfo(e.touches);
             return;
         }
         this._pinch = null;
+        const point=this.toWorld(this.synthMouse(e.touches[0]));
+        if(this.switchHandleAt(point.x,point.y)){
+            this._lastTap=0;this.handleMouseDown(this.synthMouse(e.touches[0]));return;
+        }
         const now = Date.now();
-        if (this._lastTap && now - this._lastTap < 320 && this._lastTapPoint && Math.hypot(e.touches[0].clientX-this._lastTapPoint.x,e.touches[0].clientY-this._lastTapPoint.y)<18) {   // 双击 → 开关通断
+        if (this._lastTap && now - this._lastTap < 320 && this._lastTapPoint && Math.hypot(e.touches[0].clientX-this._lastTapPoint.x,e.touches[0].clientY-this._lastTapPoint.y)<18) {   // 双击 → 选中元件
             this._lastTap = 0;
             this.handleDblClick(this.synthMouse(e.touches[0]));
             return;
@@ -1636,6 +1668,34 @@ class CircuitSimulator {
         });
     }
 
+    namePrefix(c) {
+        return {battery:'电源',resistor:'R',potentiometer:'R',bulb:'L',switch:'S',ammeter:'A',voltmeter:'V',led:'D',motor:'M',bell:'电铃'}[c.type];
+    }
+    isStandardName(c) {
+        const prefix=this.namePrefix(c);
+        return !c.label || new RegExp('^'+prefix+'[0-9]*$').test(c.label);
+    }
+    refreshAutoNames() {
+        const groups=new Map();
+        for(const c of this.components){
+            if(!c.labelMode)c.labelMode=this.isStandardName(c)?'auto':'custom';
+            const key=this.namePrefix(c);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(c);
+        }
+        for(const [prefix,group] of groups){
+            group.sort((a,b)=>Number(a.id.slice(1))-Number(b.id.slice(1)));
+            const used=new Set(group.filter(c=>c.labelMode==='custom').map(c=>c.label));
+            group.forEach((c,i)=>{
+                if(c.labelMode==='custom')return;
+                let name=group.length===1?prefix:prefix+(i+1),n=i+1;
+                while(used.has(name))name=prefix+(++n);
+                c.label=name;used.add(name);
+            });
+        }
+        if(this.schematicReference)for(const c of this.schematicReference.components){
+            const current=this.components.find(x=>x.id===c.id);if(current){c.label=current.label;c.labelMode=current.labelMode;}
+        }
+    }
+
     createComponent(type, props = {}) {
         if (!props.skipUndo) this.saveUndo();
         const def = COMPONENT_DEFS[type];
@@ -1645,9 +1705,11 @@ class CircuitSimulator {
             ...JSON.parse(JSON.stringify(def.defaults))
         };
         // 覆盖外部传入的有效属性
-        ['voltage','resistance','ratedCurrent','forwardVoltage','position','state','range','rotation','label']
+        ['voltage','resistance','ratedCurrent','forwardVoltage','position','state','range','rotation','label','labelMode']
             .forEach(k => { if (props[k] !== undefined) comp[k] = props[k]; });
+        comp.labelMode = props.labelMode || (props.label ? 'custom' : 'auto');
         this.components.push(comp);
+        this.refreshAutoNames();
         this.selectedComponent = comp; this.selectedWire = null;
         this.updatePropertiesPanel();
         this.updateCircuitInfo();
@@ -1974,23 +2036,8 @@ class CircuitSimulator {
         if (this.predictionHidden) return '<p>请先预测电路现象，再点击“揭示结果”。</p>';
         if (this.faultHidden) return '<p>故障探究中：请观察灯泡及电表，选择怀疑的元件或导线。</p>';
         const issues = this.getAmmeterPolarityIssues(kind === 'open');
-        const openSwitches = this.components.filter(c => c.type === 'switch' && c.state === 'open').length;
-        const floating = this.components.flatMap(c => this.terminals(c).map(t => ({c, t})))
-            .filter(({c, t}) => !this.isTerminalConnected(c, t.id)).length;
         let html = baseHtml;
-        if (issues.length) {
-            html += `<div style="margin-top:8px;padding:8px;border-radius:6px;background:rgba(231,76,60,.12);color:#e74c3c;font-weight:700;line-height:1.6;">
-                ${issues.map(s => `⚠ ${s}`).join('<br>')}
-            </div>`;
-        }
-        html += `<div style="margin-top:8px;padding:8px;border-radius:6px;background:rgba(52,152,219,.14);line-height:1.7;">
-            <b>闭合开关前检查：</b><br>
-            ① 电源正极 → 开关 → 电流表 <b>0.6/3</b> 量程接线柱 → 用电器 → 电源负极。<br>
-            ② 电流表必须串联，做到 <b>“量程柱进，−柱出”</b>，不能并联在电源或灯泡两端。<br>
-            ③ 电压表要并联在被测元件两端，用 <b>−</b> 与 <b>3/15</b> 两个接线柱。<br>
-            ④ ${openSwitches ? `还有 <b>${openSwitches}</b> 个开关处于断开状态，请确认后再闭合。` : '开关闭合后再观察电流表、电压表读数。'}<br>
-            ⑤ ${floating ? `还有 <b>${floating}</b> 个接线柱未连线，请检查是否漏接。` : '所有接线柱看起来已接入导线。'}
-        </div>`;
+        if (issues.length) html += '<p class="badge-warn">⚠ 电流表反接，请交换接线柱。</p>';
         return html;
     }
 
@@ -2059,6 +2106,7 @@ class CircuitSimulator {
     }
 
     recalc() {
+        this.refreshAutoNames();
         if (this.simulationRunning) this.solveCircuit();
         else this.draw();
         this.refreshSelectedReadings();
@@ -2193,8 +2241,8 @@ class CircuitSimulator {
 
     realComponentBox(comp, pad = 20) {
         const p = this.componentPos(comp);
-        const bounds = {led:[-30,-58,30,62],motor:[-66,-76,66,57],bell:[-52,-76,60,91],battery:[-68,-48,68,48], bulb:[-56,-64,56,48], switch:[-60,-48,60,40],
-            resistor:[-34,-14,34,16], potentiometer:[-124,-80,124,82],
+        const bounds = {led:[-30,-58,30,62],motor:[-66,-76,66,57],bell:[-52,-76,60,91],battery:[-68,-48,68,84], bulb:[-56,-64,56,48], switch:[-60,-48,60,40],
+            resistor:[-34,-14,34,48], potentiometer:[-124,-80,124,82],
             ammeter:[-64,-108,64,81], voltmeter:[-64,-108,64,81]};
         const symbols={led:[-40,-43,40,78],motor:[-38,-28,38,65],bell:[-29,-23,29,77]};
         const [l,t,r,b] = this.viewMode==='schematic'?(symbols[comp.type]||(comp.type==='potentiometer'?[-49,-30,49,58]:[-33,-25,33,46])):(bounds[comp.type] || [-50,-50,50,50]);
@@ -2892,6 +2940,7 @@ class CircuitSimulator {
         ctx.lineWidth = 2;
         this.label(comp, '+', 18, -20, {color:'#e74c3c', font:'bold 15px Arial'});
         this.label(comp, '−', -18, -20, {color:'#2980b9', font:'bold 15px Arial'});
+        this.label(comp,comp.label||'电源',0,45,{font:'bold 13px Arial'});
         this.label(comp, comp.voltage + 'V', 0, 28, {color:'#2c3e50', font:'bold 13px "Microsoft YaHei"'});
     }
 
@@ -2900,6 +2949,7 @@ class CircuitSimulator {
         ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-22,0); ctx.moveTo(22,0); ctx.lineTo(32,0); ctx.stroke();
         ctx.fillStyle = this.symbolFill; ctx.fillRect(-22,-8,44,16);
         ctx.strokeRect(-22,-9,44,18);
+        this.label(comp,comp.label||'R',0,41,{font:'bold 13px Arial'});
         this.label(comp, comp.resistance + 'Ω', 0, 24, {font:'italic bold 13px Georgia', color:'#2c3e50'});
     }
 
@@ -3025,6 +3075,7 @@ class CircuitSimulator {
             this.label(comp,'电源',0,5,{font:'16px Microsoft YaHei',color:'#7c90aa'});
             this.label(comp,'+',46,5,{font:'bold 22px Arial',color:'#d92121'});
         }
+        this.label(comp,comp.label||'电源',0,76,{font:'bold 13px Arial'});
         this.label(comp,comp.voltage+'V',0,58,{font:'bold 14px Arial'});
     }
 
@@ -3037,6 +3088,7 @@ class CircuitSimulator {
         ['#8e44ad','#e74c3c','#f1c40f'].forEach((color, i) => {
             ctx.fillStyle = color; ctx.fillRect(-12 + i*10, -8, 3, 16);
         });
+        this.label(comp,comp.label||'R',0,41,{font:'bold 13px Arial'});
         this.label(comp, comp.resistance + 'Ω', 0, 24, {font:'bold 12px "Microsoft YaHei"'});
     }
 
@@ -3154,6 +3206,7 @@ class CircuitSimulator {
      *  属性面板
      * ============================================================ */
     updatePropertiesPanel() {
+        this.refreshAutoNames();
         const info = document.getElementById('selected-component-info');
         const props = document.getElementById('component-properties');
         const c = this.selectedComponent;
@@ -3180,7 +3233,7 @@ class CircuitSimulator {
                 html+='<p id="p-load-status" role="status"></p>';
                 break;
             case 'switch':
-                html = `<div class="property-control"><label>状态（也可双击开关）</label>
+                html = `<div class="property-control"><label>状态（单击手柄可切换）</label>
                     <select id="p-state"><option value="open"${c.state==='open'?' selected':''}>断开</option>
                     <option value="closed"${c.state==='closed'?' selected':''}>闭合</option></select></div>`;
                 break;
@@ -3303,6 +3356,8 @@ class CircuitSimulator {
         this.panX = 40; this.panY = 30; this.scale = 1;
         const mode=this.viewMode;
         this.viewMode='schematic';exp.build(this);
+        this.components.forEach(c=>{if(this.isStandardName(c))c.labelMode='auto';});
+        this.refreshAutoNames();
         this.prepareExperimentViews();this.viewMode=mode;
         this.suppressUndo = false;
         this.components.forEach(c => { c.realX = c.realX ?? c.x; c.realY = c.realY ?? c.y; });
@@ -3377,7 +3432,7 @@ const EXPERIMENTS = [
         goal: '验证串联电路中各处电流相等。',
         steps: [
             '将 A₁、A₂、A₃ 分别接在第一个灯泡前、两灯之间、第二个灯泡后。',
-            '闭合开关（双击开关），同时观察三个电流表的示数。',
+            '闭合开关（单击手柄），同时观察三个电流表的示数。',
             '改变电源电压或灯泡电阻，再比较三处电流。',
             '结论：串联电路各处电流相等，I₁=I₂=I₃。'
         ],
@@ -3405,10 +3460,10 @@ const EXPERIMENTS = [
         subtitle: '干路电流=各支路之和',
         goal: '验证并联电路干路电流等于各支路电流之和。',
         steps: [
-            '两个灯泡 L₁ L₂ 并联接在电源两端，开关和电流表 A 在干路。',
-            '两个支路各串联一个电流表 A₁、A₂，电流要从量程接线柱进入、从“−”柱流出。',
-            '闭合开关，观察两灯都发光，并读取 A、A₁、A₂。',
-            '比较：干路电流 A ≈ 支路电流 A₁ + A₂。',
+            '两个灯泡 L₁ L₂ 并联接在电源两端，开关和电流表 A1 在干路。',
+            '两个支路各串联一个电流表 A2、A3，电流要从量程接线柱进入、从“−”柱流出。',
+            '闭合开关，观察两灯都发光，并读取 A1、A2、A3。',
+            '比较：干路电流 A1 ≈ 支路电流 A2 + A3。',
             '结论：并联电路 I=I₁+I₂，各支路电压相等。'
         ],
         build(sim) {
@@ -3495,7 +3550,7 @@ const EXPERIMENTS = [
         subtitle: '总电压等于各部分电压之和',
         goal: '同时测量两灯电压和总电压，验证 U=U₁+U₂。',
         steps: [
-            'V₁、V₂ 分别并联在 L₁、L₂ 两端，V 测量两灯的总电压。',
+            'V1、V2 分别并联在 L1、L2 两端，V3 测量两灯的总电压。',
             '闭合开关，比较三个电压表的示数。',
             '两灯电阻初始不同；改变电阻或电源电压，记录多组读数。',
             '结论：U=U₁+U₂。串联灯泡的电压不一定相等。'
@@ -3516,7 +3571,7 @@ const EXPERIMENTS = [
         subtitle: '支路电压与电源电压相等',
         goal: '同时测量电源和两个并联灯泡的电压，验证 U=U₁=U₂。',
         steps: [
-            'V 测电源两端，V₁、V₂ 分别并联在 L₁、L₂ 上方。',
+            'V3 测电源两端，V1、V2 分别并联在 L1、L2 上方。',
             '闭合开关，观察两个支路的电压是否相同。',
             '改变一个灯泡的电阻，比较支路电压与亮度；再改变电源电压。',
             '结论：并联各支路两端电压相等，U=U₁=U₂。'
@@ -3537,7 +3592,7 @@ const EXPERIMENTS = [
         subtitle: '三处开关都控制整个回路',
         goal: '比较串联回路不同位置的开关，认识其控制作用相同。',
         steps: [
-            'S 在电源附近，S₁ 在两灯之间，S₂ 在回路另一侧，初始均闭合。',
+            'S1 在电源附近，S2 在两灯之间，S3 在回路另一侧，初始均闭合。',
             '每次只断开一个开关，观察两灯；恢复后再试另一个。',
             '尝试同时断开两个开关，再只闭合其中一个。',
             '结论：串联回路任意位置断开，整个回路都没有电流。'
@@ -3555,9 +3610,9 @@ const EXPERIMENTS = [
         subtitle: '干路总控，支路独立控制',
         goal: '区分干路开关与支路开关的控制范围。',
         steps: [
-            'S 是干路总开关，S₁、S₂ 分别与 L₁、L₂ 串联在各自支路。',
-            '分别断开 S₁、S₂，观察另一支路是否仍正常工作。',
-            '闭合两个支路开关，再断开干路 S，观察两灯。',
+            'S1 是干路总开关，S2、S3 分别与 L1、L2 串联在各自支路。',
+            '分别断开 S2、S3，观察另一支路是否仍正常工作。',
+            '闭合两个支路开关，再断开干路 S1，观察两灯。',
             '结论：干路开关控制整个电路，支路开关只控制所在支路。'
         ],
         build(sim) {
@@ -3577,7 +3632,7 @@ const EXPERIMENTS = [
             '两个支路分别使用 R₁ 的 A-C 接法和 R₂ 的 B-C 接法；实物接线时保持指定接线柱。',
             '两滑片初始在中点。将两者分别设为相同位置，比较电流和亮度。',
             '向左移动：A-C 接入电阻减小，B-C 接入电阻增大；向右移动相反。',
-            '打开变阻器原理图，观察横梁、滑片与有效电阻丝上的红色电流路径。',
+            '选中变阻器，在属性中打开原理图，观察横梁、滑片与有效电阻丝上的红色电流路径。',
             '每个电流表仍只测自己所在支路，不能把分流点移过电流表。'
         ],
         build(sim) {
@@ -3622,7 +3677,7 @@ const ICONS = {
     RES: '<svg viewBox="0 0 48 24"><line x1="2" y1="12" x2="11" y2="12"/><rect x="11" y="6" width="26" height="12"/><line x1="37" y1="12" x2="46" y2="12"/></svg>',
     BULB:'<svg viewBox="0 0 48 24"><line x1="2" y1="12" x2="12" y2="12"/><circle cx="24" cy="12" r="9"/><line x1="18" y1="6" x2="30" y2="18"/><line x1="30" y1="6" x2="18" y2="18"/><line x1="36" y1="12" x2="46" y2="12"/></svg>',
     SW:  '<svg viewBox="0 0 48 24"><line x1="2" y1="16" x2="14" y2="16"/><circle cx="14" cy="16" r="2.5"/><line x1="14" y1="16" x2="32" y2="6"/><circle cx="34" cy="16" r="2.5"/><line x1="34" y1="16" x2="46" y2="16"/></svg>',
-    POT: '<svg viewBox="0 0 48 24"><line x1="2" y1="16" x2="9" y2="16"/><rect x="9" y="10" width="30" height="12"/><line x1="39" y1="16" x2="46" y2="16"/><line x1="24" y1="2" x2="24" y2="9"/><line x1="24" y1="9" x2="20" y2="5"/><line x1="24" y1="9" x2="28" y2="5"/></svg>',
+    POT: '<svg viewBox="0 0 48 30"><path d="M2 21H9M25 3H46M25 3V13"/><rect x="9" y="15" width="30" height="12"/><path d="M21 9L25 15L29 9"/></svg>',
     AM:  '<svg viewBox="0 0 48 24"><line x1="2" y1="12" x2="12" y2="12"/><circle cx="24" cy="12" r="10"/><text x="24" y="16" font-size="11" text-anchor="middle">A</text><line x1="36" y1="12" x2="46" y2="12"/></svg>',
     VM:  '<svg viewBox="0 0 48 24"><line x1="2" y1="12" x2="12" y2="12"/><circle cx="24" cy="12" r="10"/><text x="24" y="16" font-size="11" text-anchor="middle">V</text><line x1="36" y1="12" x2="46" y2="12"/></svg>'
 };
@@ -3667,5 +3722,6 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 <script src="devices.js"></script>
 <script src="classroom.js"></script>
+<script src="interface.js"></script>
 </body>
 </html>

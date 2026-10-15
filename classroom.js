@@ -4,7 +4,7 @@
 (() => {
 const STORAGE_KEY='elec-lab-experiment-v1';
 const MAX_FILE_BYTES=2*1024*1024;
-const componentFields=['id','type','x','y','rotation','realX','realY','realRotation','schematicRotation','realFlipX','schematicFlipX','voltage','resistance','ratedCurrent','forwardVoltage','position','state','range','label','potUpperSide','potContactMode','fault'];
+const componentFields=['id','type','x','y','rotation','realX','realY','realRotation','schematicRotation','realFlipX','schematicFlipX','voltage','resistance','ratedCurrent','forwardVoltage','position','state','range','label','labelMode','potUpperSide','potContactMode','fault'];
 const clone=x=>JSON.parse(JSON.stringify(x));
 const byId=id=>document.getElementById(id);
 const escape=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -29,6 +29,7 @@ function validateGraph(graph) {
   if(c.position!==undefined)requireValid(finite(c.position,0,1),'滑片位置应在 0 到 1 之间。');
   if(c.state!==undefined)requireValid(['open','closed'].includes(c.state),'开关状态无效。');
   if(c.range!==undefined)requireValid((c.type==='ammeter'?[.6,3]:[3,15]).includes(c.range),'电表量程无效。');
+  if(c.labelMode!==undefined)requireValid(['auto','custom'].includes(c.labelMode),'元件命名方式无效。');
   if(c.label!==undefined)requireValid(typeof c.label==='string'&&c.label.length<=80,'元件名称过长。');
   for(const k of ['realFlipX','schematicFlipX'])if(c[k]!==undefined)requireValid(typeof c[k]==='boolean','元件朝向无效。');
   if(c.potUpperSide!==undefined)requireValid([-1,1].includes(c.potUpperSide),'变阻器引线位置无效。');
@@ -84,7 +85,7 @@ function validateExperiment(input) {
  requireValid(input.activeExperiment==null||(Number.isInteger(input.activeExperiment)&&input.activeExperiment>=0&&input.activeExperiment<EXPERIMENTS.length),'内置实验编号无效。');
  requireValid(typeof input.darkMode==='boolean'&&typeof input.showGrid==='boolean'&&typeof input.showPotPrinciple==='boolean','显示设置无效。');
  requireValid(input.name===undefined||(typeof input.name==='string'&&input.name.length<=80),'实验名称过长。');
- return {...graph,name:input.name||'',idCounter:input.idCounter??nextId,format:input.format,version:1,viewMode:input.viewMode,camera:{panX:camera.panX,panY:camera.panY,scale:camera.scale},activeExperiment:input.activeExperiment??null,schematicReference:reference,darkMode:input.darkMode,showGrid:input.showGrid,showPotPrinciple:input.showPotPrinciple,classroom:validateClassroom(input.classroom)};
+ return {...graph,savedAt:typeof input.savedAt==='string'?input.savedAt:'',name:input.name||'',idCounter:input.idCounter??nextId,format:input.format,version:1,viewMode:input.viewMode,camera:{panX:camera.panX,panY:camera.panY,scale:camera.scale},activeExperiment:input.activeExperiment??null,schematicReference:reference,darkMode:input.darkMode,showGrid:input.showGrid,showPotPrinciple:input.showPotPrinciple,classroom:validateClassroom(input.classroom)};
 }
 Object.assign(CircuitSimulator.prototype, {
  initClassroom() {
