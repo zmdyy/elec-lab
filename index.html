@@ -2875,6 +2875,16 @@ class CircuitSimulator {
     }
 
     drawNetworkFlow() {
+        // During a live drag the electrical graph is unchanged. Animate directly
+        // on the temporary wire geometry; defer network-merge rebuilding.
+        if(this.dragging||this.draggingControlPoint){
+            for(const w of this.activeWires()){
+                if(w._flowAmbiguous||Math.abs(w._flowMag||0)<1e-6)continue;
+                const points=this.viewMode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w);
+                this.drawFlow(w,points);
+            }
+            return;
+        }
         const paths=this.activeWires().filter(w=>!w._flowAmbiguous).map(w=>({w,points:this.viewMode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w)}));
         const cacheKey=JSON.stringify([this._routeKey,paths.map(p=>[p.w._flowNet,p.w._flowMag,p.w._flowDir,p.points])]);
         if(this._flowGeometryKey===cacheKey){for(const {points,flow} of this._flowGeometry)if(Math.abs(flow)>1e-6)this.drawFlow({_flowDir:flow>=0?1:-1},points);return;}
