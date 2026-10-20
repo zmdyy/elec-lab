@@ -79,7 +79,7 @@ Object.assign(CircuitSimulator.prototype,{
 const appearance=CircuitSimulator.prototype.bulbAppearance;
 CircuitSimulator.prototype.bulbAppearance=function(c){const v=appearance.call(this,c);if(typeof c._lampLevel==='number'&&!this.predictionHidden){v.level=c._lampLevel;v.lit=v.level>.001;v.color=this.bulbGlassColor(v.level);v.filament=this.lightColor(Math.pow(v.level,.65));}return v;};
 const animate=CircuitSimulator.prototype.animate;
-CircuitSimulator.prototype.animate=function(ts){const dt=this._deviceTs===undefined?0:Math.min(.05,(ts-this._deviceTs)/1000);this._deviceTs=ts;const changing=this.advanceDevices(dt);animate.call(this,ts);if(changing&&!(this.simulationRunning&&this._hasFlow))this.draw();};
+CircuitSimulator.prototype.animate=function(ts){const dt=this._deviceTs===undefined?0:Math.min(.05,(ts-this._deviceTs)/1000);this._deviceTs=ts;const changing=this.advanceDevices(dt);animate.call(this,ts);if(changing&&!(this.simulationRunning&&this._hasFlow))this.requestDraw();};
 window.addEventListener('DOMContentLoaded',()=>{
  const button=document.createElement('button');button.className='tool-button';button.id='bell-sound';button.textContent='电铃声音：关';button.setAttribute('aria-pressed','false');
  // Classroom toolbar is created by the next DOMContentLoaded listener.
