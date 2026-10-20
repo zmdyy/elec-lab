@@ -2433,26 +2433,37 @@ class CircuitSimulator {
     // deformation joins that were introduced by the previous editor update.
     smoothEditedRealWirePath(path) {
         if(path.length!==49)return path;
-        const knots=[0,12,24,36,48],radius=6,sigma=3;
-        const smoothed=path.map((p,i)=>{
-            let x=0,y=0,sum=0;
-            for(let d=-radius;d<=radius;d++){
-                const j=i+d;if(j<0||j>=path.length)continue;
-                const weight=Math.exp(-.5*(d/sigma)**2);
-                x+=path[j].x*weight;y+=path[j].y*weight;sum+=weight;
-            }
-            return {x:x/sum,y:y/sum};
+        const marks=[0,12,24,36,48],knots=marks.map(i=>path[i]);
+        const tangent=knots.map((p,i)=>{
+            const before=knots[Math.max(0,i-1)],after=knots[Math.min(4,i+1)];
+            const span=i===0||i===4?12:24;
+            return {x:(after.x-before.x)/span,y:(after.y-before.y)/span};
         });
-        // Compact C1 corrections: visible edit handles remain on the curve.
-        for(const k of knots){
-            const dx=path[k].x-smoothed[k].x,dy=path[k].y-smoothed[k].y;
-            for(let i=Math.max(0,k-5);i<=Math.min(48,k+5);i++){
-                const z=Math.abs(i-k)/5,weight=(1-z*z)**2;
-                smoothed[i].x+=dx*weight;smoothed[i].y+=dy*weight;
+        // A cubic Hermite curve passes exactly through all three drag handles,
+        // with identical entry/exit tangents. Preserve intermediate routed
+        // deviations using a residual that fades smoothly at each handle.
+        // Subsample x3 so even tight bends appear rounded, not polygonal.
+        const output=[];
+        for(let section=0;section<4;section++){
+            const a=knots[section],b=knots[section+1],u=tangent[section],v=tangent[section+1];
+            for(let step=0;step<36;step++){
+                const t=step/36,t2=t*t,t3=t2*t;
+                const h00=2*t3-3*t2+1,h10=t3-2*t2+t,h01=-2*t3+3*t2,h11=t3-t2;
+                const i=section*12+step/3,low=Math.floor(i),fraction=i-low;
+                const x=path[low].x+(path[low+1].x-path[low].x)*fraction;
+                const y=path[low].y+(path[low+1].y-path[low].y)*fraction;
+                const fade=Math.sin(Math.PI*t)**2;
+                output.push({
+                    x:h00*a.x+h10*12*u.x+h01*b.x+h11*12*v.x+
+                        fade*(x-(a.x*(1-t)+b.x*t)),
+                    y:h00*a.y+h10*12*u.y+h01*b.y+h11*12*v.y+
+                        fade*(y-(a.y*(1-t)+b.y*t))
+                });
             }
         }
-        smoothed._sampled=true;
-        return smoothed;
+        output.push({...path[48]});
+        output._sampled=true;
+        return output;
     }
 
     resolveRealWire(w) {
