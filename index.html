@@ -3008,14 +3008,14 @@ class CircuitSimulator {
         const maxVoltage=Math.max(0,...sources.map(c=>Math.abs(c.voltage||0)));
         const noiseFloor=Math.max(1e-8,8e-9*maxVoltage);
         const graph=new Map();
-        const edge=(a,b,source=false)=>{
+        const edge=(a,b,source=false,wire=null)=>{
             if(!a||!b)return;
             if(!graph.has(a))graph.set(a,[]);
             if(!graph.has(b))graph.set(b,[]);
-            graph.get(a).push({to:b,source});
-            graph.get(b).push({to:a,source});
+            graph.get(a).push({to:b,source,wire});
+            graph.get(b).push({to:a,source,wire});
         };
-        for(const w of electricalWires)edge(this.wireEndKey(w,'start'),this.wireEndKey(w,'end'));
+        for(const w of electricalWires)edge(this.wireEndKey(w,'start'),this.wireEndKey(w,'end'),false,w);
         for(const c of this.components){
             const a=c.id+'_a',b=c.id+'_b';
             switch(c.type){
@@ -3045,13 +3045,9 @@ class CircuitSimulator {
                 const [node,hasSource]=queue[i];
                 if(node===b&&hasSource)return true;
                 for(const item of graph.get(node)||[]){
-                    // Evaluate the alternate return route, never the wire itself.
-                    if((node===a&&item.to===b||node===b&&item.to===a)&&!item.source){
-                        // This fast skip is safe for our short visual branches:
-                        // a parallel direct lead remains eligible through its
-                        // other, source-containing return route.
-                        continue;
-                    }
+                    // Remove the specific wire under test, preserving any
+                    // other parallel wires or component edges at the same nodes.
+                    if(item.wire===w)continue;
                     const source=hasSource||item.source,key=item.to+':'+(source?1:0);
                     if(!visited.has(key)){visited.add(key);queue.push([item.to,source]);}
                 }
@@ -3082,7 +3078,7 @@ class CircuitSimulator {
         if(this.dragging||this.draggingControlPoint){
             for(const w of this.activeWires()){
                 const magnitude=Math.abs(w._flowMag||0);
-                if(w._flowAmbiguous||(magnitude<=1e-4?!w._weakFlowValid:magnitude<=1e-4))continue;
+                if(w._flowAmbiguous||(magnitude<=1e-4&&!w._weakFlowValid))continue;
                 this.ctx.save();
                 if(magnitude<=1e-4)this.ctx.globalAlpha*=.4;
                 const points=this.viewMode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w);
