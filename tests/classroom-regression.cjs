@@ -71,3 +71,24 @@ replacement.replaceFault('reverse',replacement.components.find(c=>c.type==='amme
 console.log('PASS changing fault type or location is atomic, undoable and restores reversed meter connections');
 const named=build(8);named.experimentName='并联电路实验';named.components.find(c=>c.type==='potentiometer').potContactMode='mapped';const namedFile=named.experimentData(),namedRestored=build(0);namedRestored.experimentName='原实验';namedRestored.importExperiment(copy(namedFile));assert.equal(namedRestored.experimentName,'并联电路实验');assert.equal(namedRestored.components.find(c=>c.type==='potentiometer').potContactMode,'mapped');namedRestored.undo();assert.equal(namedRestored.experimentName,'原实验');delete namedFile.name;namedRestored.importExperiment(namedFile);assert.equal(namedRestored.experimentName,'');assert.match(named.fileName('json'),/^并联电路实验_\d{12}\.json$/);
 console.log('PASS experiment names, legacy JSON, mapped rheostat contacts, import undo and minute-precision filenames');
+
+// Reversal temporarily reroutes a meter; its saved three-handle routes must be
+// restored even after exporting/importing while the fault is active.
+{
+ const s=build(0),a=s.components.find(c=>c.type==='ammeter');s.gridSize=20;
+ const w=s.wires.find(w=>[w.start.compId,w.end.compId].includes(a.id));
+ for(const mode of ['real','schematic']){
+  s.viewMode=mode;const points=s.wireControlPoints(w);s.moveWireControlPoint(w,1,points[1].x+40,points[1].y+20);
+ }
+ s.viewMode='schematic';
+ const prior=JSON.stringify([w.bends,w.realBends,w.editControls]);
+ s.applyFault('reverse',a.id);
+ assert.equal(w.editControls,undefined,'normal edit handles are hidden during reversal');
+ const saved=s.experimentData();
+ const restored=build(0);restored.importExperiment(copy(saved));restored.removeFault();
+ const back=restored.wires.find(w=>[w.start.compId,w.end.compId].includes(a.id));
+ assert.equal(JSON.stringify([back.bends,back.realBends,back.editControls]),prior);
+ const invalid=copy(saved);invalid.wires.find(w=>w.reverseBackup).reverseBackup.editControls.real.points.pop();
+ assert.throws(()=>sandbox.Simulator.validateExperiment(invalid));
+ console.log('PASS reverse-fault JSON restores both views\' exact manual paths and validates backup handles');
+}

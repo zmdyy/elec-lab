@@ -128,3 +128,64 @@ console.log('PASS full network renderer subdivision invariance, cache consistenc
  assert.equal(faint.filter(w=>stray.includes(w)).length,0);
  console.log('PASS a powered parallel branch does not make an unrelated open branch animate');
 }
+
+// Small current differences cannot restart the arrow phase at each sample.
+// These five-pixel fragments used to produce 80 independent chains, all blank
+// whenever the phase offset exceeded the fragment length.
+{
+ const s=sim();s.ctx={};s.flowPhase=.3;
+ const pieces=Array.from({length:80},(_,i)=>({net:0,flow:.1+(i%2)*.000002,
+  points:[{x:i*5,y:0},{x:(i+1)*5,y:0}]}));
+ const chains=s.joinFlowSegments(pieces),marks=[];s.drawFlowArrow=p=>marks.push(p.x);
+ chains.forEach(p=>s.drawFlow({_flowDir:1},p.points));
+ assert.equal(chains.length,1);assert.ok(marks.length>=16);
+ for(let i=1;i<marks.length;i++)near(marks[i]-marks[i-1],24);
+ console.log('PASS uninterrupted 24-pixel arrow spacing across current roundoff and dense route samples');
+}
+
+// Actual physical leads must not cancel each other's arrows just because they
+// share a net and a section of their drawing lies on top of another lead.
+for(const phase of [0,.1,.3,.43])for(const direction of [1,-1]){
+ const s=sim();s.ctx={globalAlpha:1,save(){},restore(){}};s.flowPhase=phase;
+ s.resolveRealWire=w=>w.points;s.sampleRealWirePath=p=>p;
+ s.wires=[{_flowNet:'supply',_flowMag:1,_flowDir:direction,
+  points:Array.from({length:145},(_,i)=>({x:i*500/144,y:0}))},
+  {_flowNet:'supply',_flowMag:1,_flowDir:-direction,points:[{x:120,y:0},{x:380,y:0}]}];
+ const expected=[];s.drawFlowArrow=(p,a)=>expected.push([p.x,p.y,a]);
+ for(const w of s.wires)s.drawFlow(w,w.points);
+ for(let frame=0;frame<2;frame++){
+  const marks=[];s.drawFlowArrow=(p,a)=>marks.push([p.x,p.y,a]);s.drawNetworkFlow();
+  assert.equal(marks.length,expected.length,'both uncached and cached frames paint every physical lead');
+  const sorted=xs=>xs.map(p=>[p[0],p[1],Math.cos(p[2]),Math.sin(p[2])].map(v=>+v.toFixed(6)||0)).sort((a,b)=>a[0]-b[0]||a[2]-b[2]);
+  assert.deepEqual(sorted(marks),sorted(expected));
+ }
+}
+console.log('PASS overlapping physical leads: no long blank section, both directions, multiple phases and cached frames');
+{
+ const s=sim(),b=s.createComponent('battery',{voltage:.5}),v=s.createComponent('voltmeter');
+ s.connectTerminals(b,'pos',v,'r3',[],'both');s.connectTerminals(v,'neg',b,'neg',[],'both');s.solveCircuit();
+ assert.ok(v._current>4e-7&&v._current<6e-7);assert.equal(s._hasFlow,true);
+ assert.ok(s.wires.every(w=>w._weakFlowValid));
+ console.log('PASS a real sub-microamp voltmeter-only loop is conducting and animates');
+}
+{
+ const s=sim(),b=s.createComponent('battery',{voltage:3}),r=s.createComponent('resistor');
+ const spare=s.createComponent('voltmeter');
+ s.connectTerminals(b,'pos',r,'a',[],'both');s.connectTerminals(r,'b',b,'neg',[],'both');
+ s.connectTerminals(b,'pos',spare,'r3',[],'both');s.solveCircuit();
+ const spur=s.wires.at(-1);spur._flowMag=1e-6;s.qualifyWeakWireFlows(s.activeWires());
+ assert.equal(spur._weakFlowValid,false,'visiting a source and returning along the same edge is not a powered cycle');
+ console.log('PASS no phantom micro-current in a dangling spur attached to a powered node');
+}
+
+// Ambiguous ideal-wire sharing hides only the arrows. Other powered device
+// motion (for example the bell hammer) must continue to receive frames.
+{
+ const s=sim(),b=s.createComponent('battery'),bell=s.createComponent('bell');
+ for(let i=0;i<2;i++){
+  s.connectTerminals(b,'pos',bell,'a',[],'both');s.connectTerminals(bell,'b',b,'neg',[],'both');
+ }
+ s.solveCircuit();assert.ok(bell._current>.01);assert.ok(s.wires.every(w=>w._flowAmbiguous));
+ assert.equal(s._hasFlow,true,'ambiguity must not stop powered-device animation');
+ console.log('PASS ambiguous ideal-wire loops still drive powered device animation frames');
+}

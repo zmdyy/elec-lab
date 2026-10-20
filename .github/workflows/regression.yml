@@ -41,3 +41,4 @@ jobs:
         run: |
           node tests/browser-wire-editor.cjs
           node tests/browser-performance.cjs
+          node tests/browser-interface.cjs
