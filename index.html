@@ -947,6 +947,34 @@ class CircuitSimulator {
         // The electrical connectivity never changes when a handle moves.
     }
 
+    routeNewWireLocally(w) {
+        if(this.viewMode!=='real'||w.realBends?.length)return false;
+        const others=this.activeWires().filter(v=>v!==w),paths=new Map();
+        for(const v of others)paths.set(v,this.sampleRealWirePath(this.resolveRealWire(v)));
+        const accept=path=>{
+            if(!path||path.length<2)return false;
+            const result=new Map(paths);result.set(w,path);
+            if(!this.wireRoutesReport(result,w).clear)return false;
+            const sampled=this.resampleEditablePath(path);
+            if(sampled.length!==49)return false;
+            w.realBends=sampled.slice(1,-1);
+            w.editControls ||= {};
+            w.editControls.real={points:[sampled[12],sampled[24],sampled[36]].map(p=>({...p})),manual:false,sampled:true};
+            w._routeBlocked=false;return true;
+        };
+        // Natural diagonal routing first; only the new lead is optimized.
+        const natural=this.naturalWireRoutes([w]);
+        if(natural&&accept(this.smoothIndependentRoutes(natural).get(w)))return true;
+        // Fall back to single-wire obstacle avoidance around the frozen leads.
+        const occupied=[];
+        for(const [other,path] of paths)for(let i=1;i<path.length;i++)occupied.push([path[i-1],path[i],other]);
+        const start=this.wireEndPos(w,'start'),end=this.wireEndPos(w,'end');
+        const routed=this.routeRealWire(w,start,end,occupied);
+        if(!w._routeBlocked&&accept(this.sampleRealWirePath(routed)))return true;
+        // Existing whole-network planner remains available when the local route fails.
+        w._routeBlocked=false;return false;
+    }
+
     beginDragPreview(comp) {
         const mode=this.viewMode;
         this._dragOrigin={...this.componentPos(comp)};
@@ -1109,6 +1137,8 @@ class CircuitSimulator {
                     }
                     // 完成一根导线
                     this.saveUndo();
+                    // Preserve earlier routes before introducing a new connection.
+                    if(this.viewMode==='real')this.freezeAutoWirePaths();
                     this.wires.push({
                         start: this.draftWire.start,
                         bends: this.viewMode==='schematic' ? this.draftWire.bends : [],
@@ -1116,6 +1146,7 @@ class CircuitSimulator {
                         view: this.activeExperiment !== null ? this.viewMode : 'both',
                         end: {compId: term.componentId, termId: term.terminalId}
                     });
+                    if(this.viewMode==='real')this.routeNewWireLocally(this.wires.at(-1));
                     this.rememberPotContacts(this.draftWire.start);
                     this.rememberPotContacts({compId:term.componentId,termId:term.terminalId});
                     this.wireDrawing = false; this.draftWire = null;
@@ -1175,8 +1206,15 @@ class CircuitSimulator {
         }
         if(this.dragging&&this.selectedComponent)this.finishDragPreview();
         if(this.draggingControlPoint){
+            const w=this.draggingControlPoint.wire;
+            if(this.viewMode==='real'){
+                const paths=new Map(this.activeWires().map(v=>[v,this.sampleRealWirePath(this.resolveRealWire(v))]));
+                const report=this.wireRoutesReport(paths,w);
+                w._routeBlocked=report.body.includes(w)||report.self.includes(w)||report.conflicts.some(pair=>pair.includes(w));
+            }
             this._junctionKey=null;this._flowGeometryKey=null;
             this.scheduleAutosave?.();
+            this.requestDraw();
         }
         this.dragging = false;
         this.draggingControlPoint = null;
