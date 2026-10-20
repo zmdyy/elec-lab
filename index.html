@@ -976,7 +976,12 @@ class CircuitSimulator {
             w.editControls.real={points:[sampled[12],sampled[24],sampled[36]].map(p=>({...p})),manual:false,sampled:true};
             w._routeBlocked=false;return true;
         };
-        // Natural diagonal routing first; only the new lead is optimized.
+        // Cheap curved exit-lead candidate before invoking a combinatorial search.
+        const first=this.wireEndPos(w,'start'),last=this.wireEndPos(w,'end');
+        const exitA=this.terminalOutPoint(w.start.compId,w.start.termId,first);
+        const exitB=this.terminalOutPoint(w.end.compId,w.end.termId,last);
+        if(accept(this.sampleRealWirePath([first,exitA,exitB,last])))return true;
+        // Natural diagonal routing next; only the new lead is optimized.
         const natural=this.naturalWireRoutes([w]);
         if(natural&&accept(this.smoothIndependentRoutes(natural).get(w)))return true;
         // Fall back to single-wire obstacle avoidance around the frozen leads.
