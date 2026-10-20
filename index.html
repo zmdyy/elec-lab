@@ -893,7 +893,7 @@ class CircuitSimulator {
         const mode=this.viewMode;
         if(create){w.editControls ||= {};w.editControls[mode] ||= {points:[],manual:false,sampled:false};}
         const state=w.editControls?.[mode];
-        if(state?.manual&&state.points?.length===3)return state.points;
+        if(state?.points?.length===3&&(state.manual||state.sampled))return state.points;
         const path=mode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w);
         const points=this.wireQuarterPoints(path);
         if(state)state.points=points;
@@ -944,6 +944,7 @@ class CircuitSimulator {
             bends[i].x+=dx*weight;bends[i].y+=dy*weight;
         }
         state.points[index]=target;
+        if(mode==='real'){w._realEditRevision=(w._realEditRevision||0)+1;w._realSmoothCache=null;}
         // The electrical connectivity never changes when a handle moves.
     }
 
@@ -2427,14 +2428,50 @@ class CircuitSimulator {
         this.drawFaultWire?.(w, pts);
     }
 
+    // Smooth only edited real-wire paths. Keep the true terminal locations
+    // and all three user handles exact, while rounding the sharp triangular
+    // deformation joins that were introduced by the previous editor update.
+    smoothEditedRealWirePath(path) {
+        if(path.length!==49)return path;
+        const knots=[0,12,24,36,48],radius=6,sigma=3;
+        const smoothed=path.map((p,i)=>{
+            let x=0,y=0,sum=0;
+            for(let d=-radius;d<=radius;d++){
+                const j=i+d;if(j<0||j>=path.length)continue;
+                const weight=Math.exp(-.5*(d/sigma)**2);
+                x+=path[j].x*weight;y+=path[j].y*weight;sum+=weight;
+            }
+            return {x:x/sum,y:y/sum};
+        });
+        // Compact C1 corrections: visible edit handles remain on the curve.
+        for(const k of knots){
+            const dx=path[k].x-smoothed[k].x,dy=path[k].y-smoothed[k].y;
+            for(let i=Math.max(0,k-5);i<=Math.min(48,k+5);i++){
+                const z=Math.abs(i-k)/5,weight=(1-z*z)**2;
+                smoothed[i].x+=dx*weight;smoothed[i].y+=dy*weight;
+            }
+        }
+        smoothed._sampled=true;
+        return smoothed;
+    }
+
     resolveRealWire(w) {
         if(this.dragging&&this._dragBaseline?.has(w))return this.dragPreviewPath(w);
         const start = this.wireEndPos(w, 'start');
         const end = this.wireEndPos(w, 'end');
         if (w.realBends && w.realBends.length) {
-            const path=[start,...w.realBends,end];
-            if(w.editControls?.real?.sampled)path._sampled=true;
-            return path;
+            if(w.editControls?.real?.sampled){
+                const state=w.editControls.real,revision=w._realEditRevision||0,cache=w._realSmoothCache;
+                if(cache&&cache.bends===w.realBends&&cache.revision===revision&&
+                   cache.sx===start.x&&cache.sy===start.y&&cache.ex===end.x&&cache.ey===end.y)
+                    return cache.path;
+                const source=[start,...w.realBends,end],path=state.manual?
+                    this.smoothEditedRealWirePath(source):source;
+                path._sampled=true;
+                w._realSmoothCache={bends:w.realBends,revision,sx:start.x,sy:start.y,ex:end.x,ey:end.y,path};
+                return path;
+            }
+            return [start,...w.realBends,end];
         }
         const auto = this.autoRealWirePath(w, start, end);
         if (auto) return auto;
@@ -2945,20 +2982,40 @@ class CircuitSimulator {
         out.push(pts.at(-1));return out;
     }
 
+    // Faint arrows distinguish extremely small currents (notably the
+    // 1 MΩ voltmeter branch) from the ordinary bright load current.
+    drawWeakNetworkFlow() {
+        const ctx=this.ctx;ctx.save();ctx.globalAlpha*=.4;
+        for(const w of this.activeWires()){
+            const magnitude=Math.abs(w._flowMag||0);
+            if(w._flowAmbiguous||magnitude<=1e-10||magnitude>1e-4)continue;
+            const path=this.viewMode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w);
+            this.drawFlow(w,path);
+        }
+        ctx.restore();
+    }
+
     drawNetworkFlow() {
-        // During a live drag the electrical graph is unchanged. Animate directly
-        // on the temporary wire geometry; defer network-merge rebuilding.
+        // During a drag, current magnitudes stay unchanged; only paths move.
         if(this.dragging||this.draggingControlPoint){
             for(const w of this.activeWires()){
-                if(w._flowAmbiguous||Math.abs(w._flowMag||0)<1e-6)continue;
+                const magnitude=Math.abs(w._flowMag||0);
+                if(w._flowAmbiguous||magnitude<=1e-10)continue;
+                this.ctx.save();
+                if(magnitude<=1e-4)this.ctx.globalAlpha*=.4;
                 const points=this.viewMode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w);
                 this.drawFlow(w,points);
+                this.ctx.restore();
             }
             return;
         }
-        const paths=this.activeWires().filter(w=>!w._flowAmbiguous).map(w=>({w,points:this.viewMode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w)}));
+        const paths=this.activeWires().filter(w=>!w._flowAmbiguous&&Math.abs(w._flowMag||0)>1e-4)
+            .map(w=>({w,points:this.viewMode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w)}));
         const cacheKey=JSON.stringify([this._routeKey,paths.map(p=>[p.w._flowNet,p.w._flowMag,p.w._flowDir,p.points])]);
-        if(this._flowGeometryKey===cacheKey){for(const {points,flow} of this._flowGeometry)if(Math.abs(flow)>1e-6)this.drawFlow({_flowDir:flow>=0?1:-1},points);return;}
+        if(this._flowGeometryKey===cacheKey){
+            for(const {points,flow} of this._flowGeometry)if(Math.abs(flow)>1e-4)this.drawFlow({_flowDir:flow>=0?1:-1},points);
+            this.drawWeakNetworkFlow();return;
+        }
         const points=paths.flatMap(p=>p.points),segments=new Map(),key=p=>p.x.toFixed(3)+','+p.y.toFixed(3);
         for(const {w,points:pts} of paths)for(let i=1;i<pts.length;i++){
             const a=pts[i-1],b=pts[i],len=Math.hypot(b.x-a.x,b.y-a.y);if(len<.001)continue;
@@ -2972,10 +3029,11 @@ class CircuitSimulator {
         }
         this._flowGeometryKey=cacheKey;this._flowGeometry=this.joinFlowSegments([...segments.values()]);
         for(const {points,flow} of this._flowGeometry)this.drawFlow({_flowDir:1},points);
+        this.drawWeakNetworkFlow();
     }
 
     joinFlowSegments(segments) {
-        const edges=segments.filter(e=>Math.abs(e.flow)>1e-6).map(e=>({...e,points:e.flow>0?e.points:[...e.points].reverse(),flow:Math.abs(e.flow)}));
+        const edges=segments.filter(e=>Math.abs(e.flow)>1e-4).map(e=>({...e,points:e.flow>0?e.points:[...e.points].reverse(),flow:Math.abs(e.flow)}));
         const nodes=new Map(),key=(e,p)=>String(e.net)+':'+p.x.toFixed(3)+','+p.y.toFixed(3);
         for(const e of edges){e.a=key(e,e.points[0]);e.b=key(e,e.points.at(-1));for(const k of [e.a,e.b]){if(!nodes.has(k))nodes.set(k,[]);nodes.get(k).push(e);}}
         const used=new Set(),chains=[];
