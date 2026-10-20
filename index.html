@@ -789,14 +789,10 @@ class CircuitSimulator {
     }
 
     findWireControlPointAt(x, y) {
-        const thr = 9 * this.hitScale;
-        for (let i = this.wires.length - 1; i >= 0; i--) {
-            if (!this.wireVisibleInCurrentView(this.wires[i])) continue;
-            const bends = this.viewMode==='real'&&!this.wires[i].realBends?this.resolveRealWire(this.wires[i]).slice(1,-1):this.wireControlPoints(this.wires[i]);
-            for (let j = bends.length - 1; j >= 0; j--) {
-                if (Math.hypot(bends[j].x - x, bends[j].y - y) < thr) return {wire:this.wires[i], index:j};
-            }
-        }
+        if(!this.selectedWire||!this.wireVisibleInCurrentView(this.selectedWire))return null;
+        const points=this.wireControlPoints(this.selectedWire);
+        for(let i=points.length-1;i>=0;i--)if(Math.hypot(points[i].x-x,points[i].y-y)<9*this.hitScale)
+            return {wire:this.selectedWire,index:i};
         return null;
     }
     distToSeg(px, py, a, b) {
@@ -859,6 +855,7 @@ class CircuitSimulator {
         return {x: e.x, y: e.y};
     }
     resolveWire(w) {
+        if(this.dragging&&this._dragBaseline?.has(w))return this.dragPreviewPath(w);
         if(w.autoSchematic)return this.autoRealWirePath(w,this.wireEndPos(w,'start'),this.wireEndPos(w,'end'));
         const pts = [this.wireEndPos(w, 'start')];
         (w.bends || []).forEach(b => pts.push(b));
@@ -866,14 +863,214 @@ class CircuitSimulator {
         return pts;
     }
 
-    wireControlPoints(w, create = false) {
-        if (this.viewMode !== 'real') {
-            if(create&&w.autoSchematic){w.bends=this.resolveWire(w).slice(1,-1).map(p=>({...p}));w.autoSchematic=false;this._routeKey=null;}
-            if (create && !w.bends) w.bends = [];
-            return w.autoSchematic?this.resolveWire(w).slice(1,-1):(w.bends || []);
+    // Three stable edit handles are separate from the routing/smoothing vertices.
+    wireQuarterPoints(path) {
+        if(!path?.length)return Array.from({length:3},()=>({x:0,y:0}));
+        const lengths=[0];for(let i=1;i<path.length;i++)lengths.push(lengths[i-1]+Math.hypot(path[i].x-path[i-1].x,path[i].y-path[i-1].y));
+        const total=lengths.at(-1),at=t=>{
+            const d=t*total;let i=1;while(i<lengths.length-1&&lengths[i]<d)i++;
+            const a=path[i-1]||path[0],b=path[i]||a,k=(d-(lengths[i-1]||0))/Math.max(1e-9,(lengths[i]||0)-(lengths[i-1]||0));
+            return {x:a.x+(b.x-a.x)*k,y:a.y+(b.y-a.y)*k};
+        };
+        return [.25,.5,.75].map(at);
+    }
+
+    resampleEditablePath(path) {
+        // 48 equally-spaced segments ensure handle indices 12/24/36
+        // and retain a smoothly rendered shape without hundreds of handles.
+        if(!path?.length)return [];
+        const lengths=[0];for(let i=1;i<path.length;i++)lengths.push(lengths[i-1]+Math.hypot(path[i].x-path[i-1].x,path[i].y-path[i-1].y));
+        const total=lengths.at(-1),out=[];let i=1;
+        for(let n=0;n<=48;n++){
+            const d=total*n/48;while(i<path.length-1&&lengths[i]<d)i++;
+            const a=path[i-1]||path[0],b=path[i]||a,k=(d-lengths[i-1])/Math.max(1e-9,lengths[i]-lengths[i-1]);
+            out.push({x:a.x+(b.x-a.x)*k,y:a.y+(b.y-a.y)*k});
         }
-        if (create && !w.realBends) w.realBends = this.resolveRealWire(w).slice(1, -1).map(p => ({x:p.x, y:p.y}));
-        return w.realBends || [];
+        return out;
+    }
+
+    wireControlPoints(w, create = false) {
+        const mode=this.viewMode;
+        if(create){w.editControls ||= {};w.editControls[mode] ||= {points:[],manual:false,sampled:false};}
+        const state=w.editControls?.[mode];
+        if(state?.manual&&state.points?.length===3)return state.points;
+        const path=mode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w);
+        const points=this.wireQuarterPoints(path);
+        if(state)state.points=points;
+        return points;
+    }
+
+    freezeAutoWirePaths() {
+        // When editing begins, preserve all other wires rather than asking the
+        // global router to change them on every drag event.
+        const mode=this.viewMode;
+        const wires=this.activeWires(),paths=wires.map(w=>({
+            w,path:mode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w)
+        }));
+        for(const {w,path} of paths){
+            const needs=mode==='real'?!w.realBends?.length:!!w.autoSchematic;
+            if(!needs)continue;
+            const sampled=this.resampleEditablePath(path);if(sampled.length!==49)continue;
+            w.editControls ||= {};
+            w.editControls[mode] ||= {points:[sampled[12],sampled[24],sampled[36]].map(p=>({...p})),manual:false,sampled:true};
+            w.editControls[mode].sampled=true;
+            if(mode==='real')w.realBends=sampled.slice(1,-1);
+            else {w.bends=sampled.slice(1,-1);w.autoSchematic=false;}
+        }
+    }
+
+    moveWireControlPoint(w,index,x,y) {
+        if(index<0||index>2)return;
+        this.wireControlPoints(w,true);
+        const mode=this.viewMode;
+        let state=w.editControls[mode];
+        if(!state.manual){
+            this.freezeAutoWirePaths();
+            const path=mode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w);
+            const sampled=this.resampleEditablePath(path);
+            if(sampled.length!==49)return;
+            if(mode==='real')w.realBends=sampled.slice(1,-1);
+            else {w.bends=sampled.slice(1,-1);w.autoSchematic=false;}
+            state={points:[sampled[12],sampled[24],sampled[36]].map(p=>({...p})),manual:true,sampled:true};
+            w.editControls[mode]=state;
+        }
+        const target={x:this.snap(x),y:this.snap(y)},previous=state.points[index];
+        const dx=target.x-previous.x,dy=target.y-previous.y;
+        if(!dx&&!dy)return;
+        const bends=mode==='real'?w.realBends:w.bends,anchor=(index+1)/4;
+        if(!bends?.length)return;
+        for(let i=0;i<bends.length;i++){
+            const t=(i+1)/48,weight=Math.max(0,1-Math.abs(t-anchor)/.25);
+            bends[i].x+=dx*weight;bends[i].y+=dy*weight;
+        }
+        state.points[index]=target;
+        // The electrical connectivity never changes when a handle moves.
+    }
+
+    simplifyRoutePoints(path,tolerance=2) {
+        if(path.length<4)return path;
+        const keep=new Set([0,path.length-1]),visit=(lo,hi)=>{
+            let best=tolerance,id=-1;
+            for(let i=lo+1;i<hi;i++){
+                const d=this.distToSeg(path[i].x,path[i].y,path[lo],path[hi]);
+                if(d>best){best=d;id=i;}
+            }
+            if(id>=0){keep.add(id);visit(lo,id);visit(id,hi);}
+        };
+        visit(0,path.length-1);
+        return [...keep].sort((a,b)=>a-b).map(i=>path[i]);
+    }
+
+    routeNewWireLocally(w) {
+        if(this.viewMode!=='real'||w.realBends?.length)return false;
+        const others=this.activeWires().filter(v=>v!==w),paths=new Map();
+        for(const v of others)paths.set(v,this.sampleRealWirePath(this.resolveRealWire(v)));
+        const accept=path=>{
+            if(!path||path.length<2)return false;
+            const result=new Map(paths);result.set(w,path);
+            if(!this.wireRoutesReport(result,w).clear)return false;
+            const sampled=this.resampleEditablePath(path);
+            if(sampled.length!==49)return false;
+            w.realBends=sampled.slice(1,-1);
+            w.editControls ||= {};
+            w.editControls.real={points:[sampled[12],sampled[24],sampled[36]].map(p=>({...p})),manual:false,sampled:true};
+            w._routeBlocked=false;return true;
+        };
+        // Cheap curved exit-lead candidate before invoking a combinatorial search.
+        const first=this.wireEndPos(w,'start'),last=this.wireEndPos(w,'end');
+        const exitA=this.terminalOutPoint(w.start.compId,w.start.termId,first);
+        const exitB=this.terminalOutPoint(w.end.compId,w.end.termId,last);
+        if(accept(this.sampleRealWirePath([first,exitA,exitB,last])))return true;
+        // Natural diagonal routing next; only the new lead is optimized.
+        const natural=this.naturalWireRoutes([w]);
+        if(natural&&accept(this.smoothIndependentRoutes(natural).get(w)))return true;
+        // Fall back to single-wire obstacle avoidance around the frozen leads.
+        const occupied=[];
+        for(const [other,path] of paths){const points=this.simplifyRoutePoints(path);for(let i=1;i<points.length;i++)occupied.push([points[i-1],points[i],other]);}
+        const start=this.wireEndPos(w,'start'),end=this.wireEndPos(w,'end');
+        const routed=this.routeRealWire(w,start,end,occupied);
+        if(!w._routeBlocked&&accept(this.sampleRealWirePath(routed)))return true;
+        // Existing whole-network planner remains available when the local route fails.
+        w._routeBlocked=false;return false;
+    }
+
+    beginDragPreview(comp) {
+        const mode=this.viewMode;
+        this._dragOrigin={...this.componentPos(comp)};
+        this._dragBaseline=new Map();
+        const snapshot=this.activeWires().map(w=>{
+            const path=mode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w);
+            return {w,path:this.resampleEditablePath(path),start:this.wireEndPos(w,'start'),end:this.wireEndPos(w,'end')};
+        });
+        for(const item of snapshot)this._dragBaseline.set(item.w,item);
+    }
+
+    dragPreviewPath(w) {
+        const base=this._dragBaseline?.get(w);
+        if(!base)return this.viewMode==='real'?this.resolveRealWire(w):this.resolveWire(w);
+        const start=this.wireEndPos(w,'start'),end=this.wireEndPos(w,'end');
+        const sx=start.x-base.start.x,sy=start.y-base.start.y;
+        const ex=end.x-base.end.x,ey=end.y-base.end.y;
+        if(!sx&&!sy&&!ex&&!ey)return base.path;
+        const n=base.path.length-1;
+        const path=base.path.map((p,i)=>{const t=i/n;return {x:p.x+sx*(1-t)+ex*t,y:p.y+sy*(1-t)+ey*t};});
+        if(this.viewMode==='real')path._sampled=true;
+        return path;
+    }
+
+    finishDragPreview() {
+        const entries=this._dragBaseline;if(!entries)return;
+        const moved=this._dragOrigin&&Math.hypot(this.componentPos(this.selectedComponent).x-this._dragOrigin.x,this.componentPos(this.selectedComponent).y-this._dragOrigin.y)>.01;
+        if(!moved){this._dragBaseline=null;return;}
+        const mode=this.viewMode,paths=new Map();
+        for(const [w,base] of entries){
+            const path=this.dragPreviewPath(w);
+            paths.set(w,path);
+            const affected=w.start.compId===this.selectedComponent.id||w.end.compId===this.selectedComponent.id;
+            if(!affected&&(mode==='real'?!!w.realBends?.length:!w.autoSchematic))continue;
+            w.editControls ||= {};
+            const state=w.editControls[mode] ||= {points:[],manual:false,sampled:true};
+            state.sampled=true;
+            if(affected||!state.manual)state.points=[path[12],path[24],path[36]].map(p=>({...p}));
+            if(mode==='real')w.realBends=path.slice(1,-1).map(p=>({...p}));
+            else {w.bends=path.slice(1,-1).map(p=>({...p}));w.autoSchematic=false;}
+        }
+        // Only inspect the relocated wires. Preserve every unrelated route.
+        if(mode==='real'){
+            const shiftedBox=this.realComponentBox(this.selectedComponent,0);
+            const impacted=new Set();
+            for(const [w,path] of paths){
+                const connected=w.start.compId===this.selectedComponent.id||w.end.compId===this.selectedComponent.id;
+                const obstructed=!connected&&path.slice(1).some((p,i)=>this.segmentIntersectsBox(path[i],p,shiftedBox));
+                if(connected||obstructed)impacted.add(w);
+            }
+            for(const [w] of entries){
+                if(!impacted.has(w))continue;
+                const report=this.wireRoutesReport(paths,w);
+                const collided=report.body.includes(w)||report.self.includes(w)||report.conflicts.some(pair=>pair.includes(w));
+                w._routeBlocked=collided;
+                if(!collided||w.editControls?.real?.manual)continue;
+                const occupied=[];
+                for(const [other,path] of paths)if(other!==w){
+                    const points=this.simplifyRoutePoints(path);
+                    for(let i=1;i<points.length;i++)occupied.push([points[i-1],points[i],other]);
+                }
+                if(occupied.length>900){w._routeBlocked=true;continue;}
+                const start=this.wireEndPos(w,'start'),end=this.wireEndPos(w,'end');
+                const proposed=this.routeRealWire(w,start,end,occupied);
+                if(w._routeBlocked)continue;
+                const sampled=this.resampleEditablePath(this.sampleRealWirePath(proposed));
+                const check=new Map(paths);check.set(w,sampled);
+                if(!this.wireRoutesReport(check,w).clear){w._routeBlocked=true;continue;}
+                w.realBends=sampled.slice(1,-1);
+                w.editControls.real.points=[sampled[12],sampled[24],sampled[36]].map(p=>({...p}));
+                paths.set(w,sampled);w._routeBlocked=false;
+            }
+        }
+        this._dragBaseline=null;this._dragOrigin=null;
+        this._routeKey=null;this._junctionKey=null;this._flowGeometryKey=null;
+        this.scheduleAutosave?.();
+        this.requestDraw();
     }
 
     wireVisibleInCurrentView(w) {
@@ -943,6 +1140,7 @@ class CircuitSimulator {
             if (comp) {
                 this.selectedComponent = comp; this.selectedWire = null;
                 this.saveUndo();
+                this.beginDragPreview(comp);
                 this.dragging = true;
                 const p = this.componentPos(comp);
                 this.dragOffset = {x: x - p.x, y: y - p.y};
@@ -969,6 +1167,8 @@ class CircuitSimulator {
                     }
                     // 完成一根导线
                     this.saveUndo();
+                    // Preserve earlier routes before introducing a new connection.
+                    if(this.viewMode==='real')this.freezeAutoWirePaths();
                     this.wires.push({
                         start: this.draftWire.start,
                         bends: this.viewMode==='schematic' ? this.draftWire.bends : [],
@@ -976,6 +1176,7 @@ class CircuitSimulator {
                         view: this.activeExperiment !== null ? this.viewMode : 'both',
                         end: {compId: term.componentId, termId: term.terminalId}
                     });
+                    if(this.viewMode==='real')this.routeNewWireLocally(this.wires.at(-1));
                     this.rememberPotContacts(this.draftWire.start);
                     this.rememberPotContacts({compId:term.componentId,termId:term.terminalId});
                     this.wireDrawing = false; this.draftWire = null;
@@ -1002,26 +1203,25 @@ class CircuitSimulator {
             this.panX += e.clientX - this.lastPanPoint.x;
             this.panY += e.clientY - this.lastPanPoint.y;
             this.lastPanPoint = {x: e.clientX, y: e.clientY};
-            this.draw();
+            this.requestDraw();
             return;
         }
         if (this.draggingControlPoint) {
-            const p = this.wireControlPoints(this.draggingControlPoint.wire)[this.draggingControlPoint.index];
-            p.x = this.snap(x); p.y = this.snap(y);
-            this.draw();
+            this.moveWireControlPoint(this.draggingControlPoint.wire,this.draggingControlPoint.index,x,y);
+            this.requestDraw();
             return;
         }
         if (this.dragging && this.selectedComponent) {
             const nx = this.snap(x - this.dragOffset.x), ny = this.snap(y - this.dragOffset.y);
             if (this.viewMode === 'real') { this.selectedComponent.realX = nx; this.selectedComponent.realY = ny; }
             else { this.selectedComponent.x = nx; this.selectedComponent.y = ny; }
-            this.recalc();
+            this.requestDraw();
             return;
         }
         if (this.currentTool === 'wire') {
             const term = this.findTerminalAt(x, y);
             this.draftPos = term ? {x: term.x, y: term.y} : {x, y};
-            this.draw();
+            this.requestDraw();
         }
     }
 
@@ -1033,6 +1233,18 @@ class CircuitSimulator {
                 this.saveUndo();press.comp.state=press.comp.state==='open'?'closed':'open';
                 this.updatePropertiesPanel();this.recalc();
             }
+        }
+        if(this.dragging&&this.selectedComponent)this.finishDragPreview();
+        if(this.draggingControlPoint){
+            const w=this.draggingControlPoint.wire;
+            if(this.viewMode==='real'){
+                const paths=new Map(this.activeWires().map(v=>[v,this.sampleRealWirePath(this.resolveRealWire(v))]));
+                const report=this.wireRoutesReport(paths,w);
+                w._routeBlocked=report.body.includes(w)||report.self.includes(w)||report.conflicts.some(pair=>pair.includes(w));
+            }
+            this._junctionKey=null;this._flowGeometryKey=null;
+            this.scheduleAutosave?.();
+            this.requestDraw();
         }
         this.dragging = false;
         this.draggingControlPoint = null;
@@ -1567,10 +1779,7 @@ class CircuitSimulator {
             html += '<div data-act="rotate">↻ 旋转 90°</div>';
             if (comp.type === 'switch') html += '<div data-act="toggle">⇄ 通断切换</div>';
         }
-        if (wire) {
-            html += '<div data-act="add-cp">＋ 添加导线控制点</div>';
-            if (cp) html += '<div data-act="del-cp">－ 删除此控制点</div>';
-        }
+        // Every selected wire already has exactly three edit handles.
         html += '<div data-act="delete">🗑 删除</div>';
         menu.innerHTML = html;
         menu.style.left = e.clientX + 'px';
@@ -1580,32 +1789,14 @@ class CircuitSimulator {
             const act = d.getAttribute('act') || d.dataset.act;
             if (act === 'rotate') this.rotateSelected();
             else if (act === 'delete') this.deleteSelected();
-            else if (act === 'add-cp' && wire) this.addWireControlPoint(wire, this.contextPoint);
-            else if (act === 'del-cp' && cp) this.deleteWireControlPoint(cp);
             else if (act === 'toggle' && comp) { this.saveUndo(); comp.state = comp.state === 'open' ? 'closed':'open'; this.recalc(); }
             this.hideContextMenu();
         }));
     }
     hideContextMenu() { document.getElementById('context-menu').style.display = 'none'; }
 
-    addWireControlPoint(wire, p) {
-        this.saveUndo();
-        const bends = this.wireControlPoints(wire, true);
-        bends.push({x:this.snap(p.x), y:this.snap(p.y)});
-        this.selectedWire = wire; this.selectedComponent = null;
-        this.updatePropertiesPanel(); this.draw();
-    }
-
-    deleteWireControlPoint(cp) {
-        if (!cp || !cp.wire) return;
-        this.saveUndo();
-        const bends = this.wireControlPoints(cp.wire, true);
-        if (!bends.length) return;
-        bends.splice(cp.index, 1);
-        this.selectedWire = cp.wire; this.selectedComponent = null;
-        this.updatePropertiesPanel(); this.draw();
-    }
-
+    // Legacy add/delete-control-point menu actions are deliberately removed:
+    // the three editing handles are stable and cannot be added or deleted.
     handleKeyDown(e) {
         if (['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName) || e.target.isContentEditable || document.getElementById('classroom-dialog')?.open) return;
         if (e.key === 'r' || e.key === 'R') this.rotateSelected();
@@ -1727,7 +1918,10 @@ class CircuitSimulator {
     }
 
     deleteSelected() {
+        if(!this.selectedComponent&&!this.selectedWire)return;
         this.saveUndo();
+        // Deleting one object must not cause the remaining routes to jump.
+        this.freezeAutoWirePaths();
         if (this.selectedComponent) {
             const id = this.selectedComponent.id;
             this.components = this.components.filter(c => c.id !== id);
@@ -2115,13 +2309,20 @@ class CircuitSimulator {
         this.scheduleAutosave?.();
     }
 
+    // Coalesce pointer events and animation requests into a single canvas frame.
+    requestDraw() {
+        if(this._drawPending)return;
+        this._drawPending=true;
+        requestAnimationFrame(()=>{this._drawPending=false;this.draw();});
+    }
+
     // 电流流动动画循环
     animate(ts) {
         if (this._lastTs === undefined) this._lastTs = ts;
         const dt = Math.min((ts - this._lastTs) / 1000, 0.05);
         this._lastTs = ts;
         this.flowPhase += dt;
-        if (this.simulationRunning && this._hasFlow) this.draw();
+        if (this.simulationRunning && this._hasFlow) this.requestDraw();
         requestAnimationFrame(t => this.animate(t));
     }
 
@@ -2219,7 +2420,7 @@ class CircuitSimulator {
         ctx.stroke();
         // 折点处画节点圆点
         ctx.fillStyle = this.schematicInk;
-        (w.bends || []).forEach(b => { ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, 7); ctx.fill(); });
+        if(!w.editControls?.schematic?.sampled)(w.bends || []).forEach(b => { ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, 7); ctx.fill(); });
         // 电流流动光点动画
         if (!this._drawingNetwork && this.simulationRunning && Math.abs(w._flowMag || 0) > 1e-9) this.drawFlow(w, pts);
         if (selected) this.drawWireControlPoints(w);
@@ -2227,9 +2428,14 @@ class CircuitSimulator {
     }
 
     resolveRealWire(w) {
+        if(this.dragging&&this._dragBaseline?.has(w))return this.dragPreviewPath(w);
         const start = this.wireEndPos(w, 'start');
         const end = this.wireEndPos(w, 'end');
-        if (w.realBends && w.realBends.length) return [start, ...w.realBends, end];
+        if (w.realBends && w.realBends.length) {
+            const path=[start,...w.realBends,end];
+            if(w.editControls?.real?.sampled)path._sampled=true;
+            return path;
+        }
         const auto = this.autoRealWirePath(w, start, end);
         if (auto) return auto;
         const dx = end.x - start.x, dy = end.y - start.y;
@@ -2740,6 +2946,16 @@ class CircuitSimulator {
     }
 
     drawNetworkFlow() {
+        // During a live drag the electrical graph is unchanged. Animate directly
+        // on the temporary wire geometry; defer network-merge rebuilding.
+        if(this.dragging||this.draggingControlPoint){
+            for(const w of this.activeWires()){
+                if(w._flowAmbiguous||Math.abs(w._flowMag||0)<1e-6)continue;
+                const points=this.viewMode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w);
+                this.drawFlow(w,points);
+            }
+            return;
+        }
         const paths=this.activeWires().filter(w=>!w._flowAmbiguous).map(w=>({w,points:this.viewMode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w)}));
         const cacheKey=JSON.stringify([this._routeKey,paths.map(p=>[p.w._flowNet,p.w._flowMag,p.w._flowDir,p.points])]);
         if(this._flowGeometryKey===cacheKey){for(const {points,flow} of this._flowGeometry)if(Math.abs(flow)>1e-6)this.drawFlow({_flowDir:flow>=0?1:-1},points);return;}
@@ -2781,14 +2997,12 @@ class CircuitSimulator {
     }
 
     drawWireControlPoints(w) {
-        const bends = this.viewMode==='real' && !w.realBends ? this.resolveRealWire(w).slice(1,-1) : this.wireControlPoints(w);
-        if (!bends.length) return;
-        const ctx = this.ctx;
-        ctx.save();
-        bends.forEach(p => {
-            ctx.fillStyle = '#fff8e1'; ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 2;
-            ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, 7); ctx.fill(); ctx.stroke();
-        });
+        const bends=this.wireControlPoints(w);
+        const ctx=this.ctx;ctx.save();
+        for(const p of bends){
+            ctx.fillStyle='#fff8e1';ctx.strokeStyle='#e67e22';ctx.lineWidth=2;
+            ctx.beginPath();ctx.arc(p.x,p.y,6,0,Math.PI*2);ctx.fill();ctx.stroke();
+        }
         ctx.restore();
     }
 

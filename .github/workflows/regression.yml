@@ -1,0 +1,43 @@
+name: Circuit regression
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        test:
+          - wire-editor-regression.cjs
+          - circuit-regression.cjs
+          - classroom-regression.cjs
+          - flow-regression.cjs
+          - devices-regression.cjs
+          - interface-regression.cjs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run regression test
+        run: node tests/${{ matrix.test }}
+  browser-wire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install headless Chromium
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+      - name: Browser wire regression
+        run: |
+          node tests/browser-wire-editor.cjs
+          node tests/browser-performance.cjs
