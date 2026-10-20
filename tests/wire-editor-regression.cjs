@@ -70,4 +70,16 @@ assert.equal(s.dragging,false);
 assert.equal(solves,0);
 assert.equal(w.editControls.real.points.length,3);
 assert.ok(w.realBends.length>0);
+// Moving an unrelated component onto a wire must audit that wire locally.
+const obstruction=s.createComponent('resistor',{x:900,y:650});
+obstruction.realX=obstruction.x;obstruction.realY=obstruction.y;
+const wirePath=s.resolveRealWire(w);
+s.selectedComponent=obstruction;s.dragging=false;s.beginDragPreview(obstruction);s.dragging=true;
+obstruction.realX=wirePath[24].x;obstruction.realY=wirePath[24].y;
+let audited=false;
+s.wireRoutesReport=(routes,only)=>{if(only===w)audited=true;return {body:[],self:[],conflicts:[],clear:true};};
+s.finishDragPreview();s.dragging=false;
+assert.equal(audited,true,'a moved unconnected component must audit an obstructed wire');
+const line=Array.from({length:49},(_,i)=>({x:i*10,y:20}));
+assert.equal(s.simplifyRoutePoints(line).length,2,'local route obstacle geometry should be simplified');
 console.log('PASS wire editor: 3 handles, per-view JSON, legacy import, invalid data, redraw coalescing and electric-free dragging');
