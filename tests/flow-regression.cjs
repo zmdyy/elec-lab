@@ -92,7 +92,7 @@ console.log('PASS full network renderer subdivision invariance, cache consistenc
  const rendered=[];s.drawFlow=(w,pts)=>rendered.push(w);
  const show=()=>{rendered.length=0;s.drawNetworkFlow();return rendered.length;};
  s.solveCircuit();
- assert.match(dummy.innerHTML,/电路断开|请先预测电路现象/,'an opened series switch reports an open circuit');
+ assert.match(dummy.innerHTML,/干路电流:[\s\S]*0 A/,'an opened series switch reports a zero-current open circuit');
  assert.equal(show(),0,'disconnected loop paints no moving arrows');
  assert.ok(s.wires.every(w=>w._flowMag===0&&!w._weakFlowValid));
  sw.state='closed';s.solveCircuit();
