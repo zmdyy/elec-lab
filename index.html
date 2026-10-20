@@ -2213,7 +2213,7 @@ class CircuitSimulator {
                 // Qualify sub-milliamp arrows against an actual powered loop
                 // before painting them as faint voltmeter-like current.
                 this.qualifyWeakWireFlows(electricalWires);
-                this._hasFlow=electricalWires.some(w=>!w._flowAmbiguous&&(w._flowMag>1e-4||w._weakFlowValid));
+                this._hasFlow=electricalWires.some(w=>w._flowMag>1e-4||w._weakFlowValid);
                 const Rtot = mainVoltage / I;
                 this.reportMeasurements(mainVoltage, I, Rtot);
                 const hasWarning = this.getAmmeterPolarityIssues(false).length > 0;

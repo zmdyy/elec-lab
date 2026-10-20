@@ -177,3 +177,15 @@ console.log('PASS overlapping physical leads: no long blank section, both direct
  assert.equal(spur._weakFlowValid,false,'visiting a source and returning along the same edge is not a powered cycle');
  console.log('PASS no phantom micro-current in a dangling spur attached to a powered node');
 }
+
+// Ambiguous ideal-wire sharing hides only the arrows. Other powered device
+// motion (for example the bell hammer) must continue to receive frames.
+{
+ const s=sim(),b=s.createComponent('battery'),bell=s.createComponent('bell');
+ for(let i=0;i<2;i++){
+  s.connectTerminals(b,'pos',bell,'a',[],'both');s.connectTerminals(bell,'b',b,'neg',[],'both');
+ }
+ s.solveCircuit();assert.ok(bell._current>.01);assert.ok(s.wires.every(w=>w._flowAmbiguous));
+ assert.equal(s._hasFlow,true,'ambiguity must not stop powered-device animation');
+ console.log('PASS ambiguous ideal-wire loops still drive powered device animation frames');
+}
