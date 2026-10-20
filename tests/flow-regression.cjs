@@ -42,7 +42,35 @@ console.log('PASS ideal-wire cycle identified without changing load readings');
 const interaction=sim(),sw={id:'C99',type:'switch',state:'open'};interaction.toWorld=()=>({x:0,y:30});interaction.switchHandleAt=()=>null;interaction.findComponentAt=()=>sw;interaction.findTerminalAt=()=>null;interaction.currentTool='wire';interaction.wireDrawing=true;interaction.draftWire={};interaction.handleDblClick({});assert.equal(interaction.selectedComponent,sw);assert.equal(sw.state,'open');assert.equal(interaction.currentTool,'wire');assert.equal(interaction.draftWire,null);interaction.currentTool='select';interaction.handleDblClick({});assert.equal(sw.state,'open');
 const retina=sim();retina.canvas={width:0,height:0};dummy.clientWidth=800;dummy.clientHeight=500;box.window.devicePixelRatio=2;retina.resizeCanvas();assert.deepEqual([retina.canvas.width,retina.canvas.height,retina.viewportWidth,retina.viewportHeight],[1600,1000,800,500]);retina.exportingImage=true;assert.equal(retina.viewportWidth,1600);
 console.log('PASS wire-mode double-click selects without toggling; selection mode also selects without toggling; Retina preserves logical coordinates');
-const network=sim();network.viewMode='schematic';network.ctx={};network.flowPhase=.1;network.resolveWire=w=>w.points;let positions=[];network.drawFlowArrow=(p,a)=>positions.push([+p.x.toFixed(6),+p.y.toFixed(6),+a.toFixed(6)]);network.activeWires=()=>network.wires;
+const network=sim();network.viewMode='schematic';network.ctx={globalAlpha:1,save(){},restore(){}};network.flowPhase=.1;network.resolveWire=w=>w.points;let positions=[];network.drawFlowArrow=(p,a)=>positions.push([+p.x.toFixed(6),+p.y.toFixed(6),+a.toFixed(6)]);network.activeWires=()=>network.wires;
 network.wires=[{_flowNet:'n1',_flowMag:1,_flowDir:1,points:[{x:0,y:0},{x:120,y:0}]}];network.drawNetworkFlow();const baseline=JSON.stringify(positions);network.wires[0].points=Array.from({length:13},(_,i)=>({x:i*10,y:0}));positions=[];network.drawNetworkFlow();assert.equal(JSON.stringify(positions),baseline);positions=[];network.drawNetworkFlow();assert.equal(JSON.stringify(positions),baseline,'cached frame retains phase');
 network.wires.push({...network.wires[0],_flowNet:'unconnected',_flowDir:-1});network.drawNetworkFlow();assert.equal(network._flowGeometry.length,2,'geometrically coincident but electrically separate wires must not cancel');
 console.log('PASS full network renderer subdivision invariance, cache consistency and electrical-net isolation');
+
+// A voltmeter with 1 MOhm input across 1 V draws about 1 microamp.
+// This should be rendered as a faint directional indicator, not silently hidden
+// and not confused with the ~0.1 A load branch.
+{
+ const s=sim();s.viewMode='schematic';s.ctx={globalAlpha:1,save(){},restore(){}};
+ const battery=s.createComponent('battery',{voltage:1});
+ const load=s.createComponent('resistor',{resistance:10});
+ const meter=s.createComponent('voltmeter');
+ s.connectTerminals(battery,'pos',load,'a',[],'both');
+ s.connectTerminals(load,'b',battery,'neg',[],'both');
+ s.connectTerminals(meter,'r3',load,'a',[],'both');
+ s.connectTerminals(meter,'neg',load,'b',[],'both');
+ s.solveCircuit();
+ assert.ok(Math.abs(meter.measurement-1)<.0001,'voltmeter reads 1 V');
+ const microWires=s.wires.filter(w=>w.start.compId===meter.id||w.end.compId===meter.id);
+ assert.equal(microWires.length,2);
+ for(const w of microWires){
+  assert.ok(w._flowMag>1e-10&&w._flowMag<1e-4,'voltmeter current is genuinely tiny');
+  assert.equal(w._flowAmbiguous,false);
+ }
+ const faint=[];s.drawFlow=(w,pts)=>faint.push(w);
+ s.drawWeakNetworkFlow();
+ assert.equal(faint.filter(w=>microWires.includes(w)).length,2,
+    'both voltmeter leads must receive faint directional current arrows');
+ assert.ok(!faint.some(w=>!microWires.includes(w)),'ordinary load leads must remain bright');
+ console.log('PASS tiny voltmeter current: preserve physical magnitude, show both faint branch arrows');
+}
