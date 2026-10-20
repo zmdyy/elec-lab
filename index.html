@@ -947,6 +947,20 @@ class CircuitSimulator {
         // The electrical connectivity never changes when a handle moves.
     }
 
+    simplifyRoutePoints(path,tolerance=2) {
+        if(path.length<4)return path;
+        const keep=new Set([0,path.length-1]),visit=(lo,hi)=>{
+            let best=tolerance,id=-1;
+            for(let i=lo+1;i<hi;i++){
+                const d=this.distToSeg(path[i].x,path[i].y,path[lo],path[hi]);
+                if(d>best){best=d;id=i;}
+            }
+            if(id>=0){keep.add(id);visit(lo,id);visit(id,hi);}
+        };
+        visit(0,path.length-1);
+        return [...keep].sort((a,b)=>a-b).map(i=>path[i]);
+    }
+
     routeNewWireLocally(w) {
         if(this.viewMode!=='real'||w.realBends?.length)return false;
         const others=this.activeWires().filter(v=>v!==w),paths=new Map();
@@ -967,7 +981,7 @@ class CircuitSimulator {
         if(natural&&accept(this.smoothIndependentRoutes(natural).get(w)))return true;
         // Fall back to single-wire obstacle avoidance around the frozen leads.
         const occupied=[];
-        for(const [other,path] of paths)for(let i=1;i<path.length;i++)occupied.push([path[i-1],path[i],other]);
+        for(const [other,path] of paths){const points=this.simplifyRoutePoints(path);for(let i=1;i<points.length;i++)occupied.push([points[i-1],points[i],other]);}
         const start=this.wireEndPos(w,'start'),end=this.wireEndPos(w,'end');
         const routed=this.routeRealWire(w,start,end,occupied);
         if(!w._routeBlocked&&accept(this.sampleRealWirePath(routed)))return true;
@@ -1018,14 +1032,25 @@ class CircuitSimulator {
         }
         // Only inspect the relocated wires. Preserve every unrelated route.
         if(mode==='real'){
+            const shiftedBox=this.realComponentBox(this.selectedComponent,0);
+            const impacted=new Set();
+            for(const [w,path] of paths){
+                const connected=w.start.compId===this.selectedComponent.id||w.end.compId===this.selectedComponent.id;
+                const obstructed=!connected&&path.slice(1).some((p,i)=>this.segmentIntersectsBox(path[i],p,shiftedBox));
+                if(connected||obstructed)impacted.add(w);
+            }
             for(const [w] of entries){
-                if(w.start.compId!==this.selectedComponent.id&&w.end.compId!==this.selectedComponent.id)continue;
+                if(!impacted.has(w))continue;
                 const report=this.wireRoutesReport(paths,w);
                 const collided=report.body.includes(w)||report.self.includes(w)||report.conflicts.some(pair=>pair.includes(w));
                 w._routeBlocked=collided;
                 if(!collided||w.editControls?.real?.manual)continue;
                 const occupied=[];
-                for(const [other,path] of paths)if(other!==w)for(let i=1;i<path.length;i++)occupied.push([path[i-1],path[i],other]);
+                for(const [other,path] of paths)if(other!==w){
+                    const points=this.simplifyRoutePoints(path);
+                    for(let i=1;i<points.length;i++)occupied.push([points[i-1],points[i],other]);
+                }
+                if(occupied.length>900){w._routeBlocked=true;continue;}
                 const start=this.wireEndPos(w,'start'),end=this.wireEndPos(w,'end');
                 const proposed=this.routeRealWire(w,start,end,occupied);
                 if(w._routeBlocked)continue;
