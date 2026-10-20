@@ -11,7 +11,7 @@ const escape=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 const finite=(x,min=-1e5,max=1e5)=>typeof x==='number'&&Number.isFinite(x)&&x>=min&&x<=max;
 const requireValid=(test,message)=>{if(!test)throw new Error(message);};
 const cleanComponent=c=>Object.fromEntries(componentFields.filter(k=>c[k]!==undefined).map(k=>[k,c[k]]));
-const cleanWire=w=>({start:clone(w.start),end:clone(w.end),bends:clone(w.bends||[]),realBends:w.realBends?clone(w.realBends):null,view:w.view||'both',autoSchematic:!!w.autoSchematic,...(w.fault?{fault:w.fault}:{}),...(w.reverseBackup?{reverseBackup:clone(w.reverseBackup)}:{})});
+const cleanWire=w=>({start:clone(w.start),end:clone(w.end),bends:clone(w.bends||[]),realBends:w.realBends?clone(w.realBends):null,view:w.view||'both',autoSchematic:!!w.autoSchematic,...(w.fault?{fault:w.fault}:{}),...(w.reverseBackup?{reverseBackup:clone(w.reverseBackup)}:{}),...(w.editControls?{editControls:clone(w.editControls)}:{})});
 const uid=c=>`${c.label||COMPONENT_DEFS[c.type].name} (${c.id})`;
 const blankClassroom=()=>({records:[],recordU:null,recordI:null,predictionHidden:false,predictionText:'',faultHidden:false});
 function validateGraph(graph) {
@@ -50,9 +50,22 @@ function validateGraph(graph) {
   requireValid(['schematic','real','both',undefined].includes(w.view),'导线视图无效。');
   requireValid(w.autoSchematic===undefined||typeof w.autoSchematic==='boolean','导线整理设置无效。');
   requireValid(w.fault===undefined||w.fault==='open','导线故障类型无效。');
+  let editControls;
+  if(w.editControls!==undefined){
+   requireValid(w.editControls&&typeof w.editControls==='object'&&!Array.isArray(w.editControls),'导线控制点数据无效。');
+   requireValid(Object.keys(w.editControls).every(k=>['real','schematic'].includes(k)),'导线控制点视图无效。');
+   editControls={};
+   for(const mode of Object.keys(w.editControls)){
+    const item=w.editControls[mode];
+    requireValid(item&&typeof item==='object'&&!Array.isArray(item),'导线控制点数据无效。');
+    requireValid(Array.isArray(item.points)&&item.points.length===3&&item.points.every(p=>p&&finite(p.x)&&finite(p.y)),'每根导线必须具有3个有效控制点。');
+    requireValid(typeof item.manual==='boolean'&&(item.sampled===undefined||typeof item.sampled==='boolean'),'导线控制点状态无效。');
+    editControls[mode]={points:points(item.points),manual:item.manual,sampled:!!item.sampled};
+   }
+  }
   let backup;
   if(w.reverseBackup){const b=w.reverseBackup;requireValid(ids.get(b.owner)?.type==='ammeter'&&[w.start.compId,w.end.compId].includes(b.owner)&&typeof b.autoSchematic==='boolean','反接导线备份无效。');backup={owner:b.owner,bends:points(b.bends),realBends:b.realBends===null?null:points(b.realBends),autoSchematic:b.autoSchematic};}
-  return {...cleanWire(w),bends:points(w.bends||[]),realBends:w.realBends===null||w.realBends===undefined?null:points(w.realBends),...(backup?{reverseBackup:backup}:{})};
+  return {...cleanWire(w),bends:points(w.bends||[]),realBends:w.realBends===null||w.realBends===undefined?null:points(w.realBends),...(backup?{reverseBackup:backup}:{}),...(editControls?{editControls}:{})};
  });
  return {components,wires};
 }
