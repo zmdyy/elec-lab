@@ -74,3 +74,57 @@ console.log('PASS full network renderer subdivision invariance, cache consistenc
  assert.ok(!faint.some(w=>!microWires.includes(w)),'ordinary load leads must remain bright');
  console.log('PASS tiny voltmeter current: preserve physical magnitude, show both faint branch arrows');
 }
+
+
+// Regression: an open mechanical switch must never show a current path.
+// Include a rheostat and an ammeter to match the classroom screenshot,
+// then cycle from open -> closed -> open with the same wire objects.
+{
+ const s=sim();s.viewMode='schematic';s.ctx={globalAlpha:1,save(){},restore(){}};s.flowPhase=.25;
+ const b=s.createComponent('battery',{voltage:3});
+ const sw=s.createComponent('switch',{state:'open'});
+ const p=s.createComponent('potentiometer',{resistance:20,position:.5});
+ const r=s.createComponent('resistor',{resistance:10});
+ const a=s.createComponent('ammeter');
+ const link=(c,t,d,u)=>s.connectTerminals(c,t,d,u,[],'both');
+ link(b,'pos',sw,'a');link(sw,'b',p,'d');link(p,'a',r,'a');
+ link(r,'b',a,'r0_6');link(a,'neg',b,'neg');
+ const rendered=[];s.drawFlow=(w,pts)=>rendered.push(w);
+ const show=()=>{rendered.length=0;s.drawNetworkFlow();return rendered.length;};
+ s.solveCircuit();
+ assert.match(dummy.innerHTML,/干路电流:[\s\S]*0 A/,'an opened series switch reports a zero-current open circuit');
+ assert.equal(show(),0,'disconnected loop paints no moving arrows');
+ assert.ok(s.wires.every(w=>w._flowMag===0&&!w._weakFlowValid));
+ sw.state='closed';s.solveCircuit();
+ assert.ok(Math.abs(a.measurement)>.001,'closing the switch establishes current');
+ assert.ok(show()>0,'closing the switch restores current arrow motion');
+ sw.state='open';s.solveCircuit();
+ assert.equal(a.measurement,0);
+ assert.equal(show(),0,'opening a previously conducting loop clears cached arrows');
+ assert.ok(s.wires.every(w=>w._flowMag===0&&!w._weakFlowValid));
+ console.log('PASS switch open/closed/open: no ghost arrows, correct ammeter and cleared render cache');
+}
+
+// Open branches in a separately powered parallel circuit must be suppressed,
+// even if regularization or roundoff happens to produce nanamp-like values.
+{
+ const s=sim();s.viewMode='schematic';s.ctx={globalAlpha:1,save(){},restore(){}};
+ const battery=s.createComponent('battery',{voltage:3});
+ const load=s.createComponent('resistor',{resistance:10});
+ const sw=s.createComponent('switch',{state:'open'});
+ const dangling=s.createComponent('resistor',{resistance:20});
+ const link=(c,t,d,u)=>s.connectTerminals(c,t,d,u,[],'both');
+ link(battery,'pos',load,'a');link(load,'b',battery,'neg');
+ link(battery,'pos',sw,'a');link(sw,'b',dangling,'a');link(dangling,'b',battery,'neg');
+ s.solveCircuit();
+ const stray=s.wires.filter(w=>[sw.id,dangling.id].includes(w.start.compId)||[sw.id,dangling.id].includes(w.end.compId));
+ const powered=s.wires.find(w=>w.start.compId===battery.id&&w.end.compId===load.id);
+ assert.ok(Math.abs(battery._current)>.1);
+ for(const w of stray)w._flowMag=2e-8;
+ s.qualifyWeakWireFlows(s.activeWires());
+ assert.ok(stray.every(w=>!w._weakFlowValid),'dangling open branch has no powered return cycle');
+ assert.ok(powered._flowMag>.1,'separate powered branch still conducts');
+ const faint=[];s.drawFlow=(w)=>faint.push(w);s.drawWeakNetworkFlow();
+ assert.equal(faint.filter(w=>stray.includes(w)).length,0);
+ console.log('PASS a powered parallel branch does not make an unrelated open branch animate');
+}
