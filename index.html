@@ -1969,7 +1969,9 @@ class CircuitSimulator {
 
     clearFlow() {
         this._hasFlow = false;
-        this.wires.forEach(w => { w._flowMag = 0; w._flowDir = 1; w._flowAmbiguous=false; });
+        this._flowGeometryKey = null;
+        this._flowGeometry = [];
+        this.wires.forEach(w => { w._flowMag = 0; w._flowDir = 1; w._flowAmbiguous=false; w._weakFlowValid=false; });
         this.components.forEach(c => {
             c._current = 0;
             c._potI1 = 0;
@@ -2185,6 +2187,10 @@ class CircuitSimulator {
         if (sources.some(s => s.comp.type === 'battery')) {
             if (I < 1e-6) { this.clearFlow(); this.reportState('open', mainVoltage); }
             else {
+                // Numerical node regularization is not a conducting path.
+                // Qualify sub-milliamp arrows against an actual powered loop
+                // before painting them as faint voltmeter-like current.
+                this.qualifyWeakWireFlows(electricalWires);
                 const Rtot = mainVoltage / I;
                 this.reportMeasurements(mainVoltage, I, Rtot);
                 const hasWarning = this.getAmmeterPolarityIssues(false).length > 0;
@@ -2993,13 +2999,78 @@ class CircuitSimulator {
         out.push(pts.at(-1));return out;
     }
 
+    qualifyWeakWireFlows(electricalWires) {
+        // A 1e-9 S regularization term is added to each node by the solver.
+        // Those virtual ground leaks must never produce visible current arrows.
+        // Weak arrows are only justified when the wire belongs to a real
+        // conductive cycle that crosses at least one physical power source.
+        const sources=this.components.filter(c=>c.type==='battery');
+        const maxVoltage=Math.max(0,...sources.map(c=>Math.abs(c.voltage||0)));
+        const noiseFloor=Math.max(1e-8,8e-9*maxVoltage);
+        const graph=new Map();
+        const edge=(a,b,source=false)=>{
+            if(!a||!b)return;
+            if(!graph.has(a))graph.set(a,[]);
+            if(!graph.has(b))graph.set(b,[]);
+            graph.get(a).push({to:b,source});
+            graph.get(b).push({to:a,source});
+        };
+        for(const w of electricalWires)edge(this.wireEndKey(w,'start'),this.wireEndKey(w,'end'));
+        for(const c of this.components){
+            const a=c.id+'_a',b=c.id+'_b';
+            switch(c.type){
+                case 'battery':edge(c.id+'_pos',c.id+'_neg',true);break;
+                case 'switch':if(c.state==='closed')edge(a,b);break;
+                case 'potentiometer':
+                    edge(c.id+'_c',c.id+'_d');
+                    edge(a,c.id+'_c');edge(b,c.id+'_c');break;
+                case 'ammeter':
+                case 'voltmeter':
+                    edge(this.meterPositiveKey(c),c.id+'_neg');break;
+                case 'bulb':
+                    if(c.fault!=='open')edge(c.id+'_shell',c.id+'_tip');
+                    break;
+                case 'resistor':
+                case 'motor':
+                case 'bell':
+                case 'led':
+                    if(c.fault!=='open')edge(a,b);break;
+            }
+        }
+        const connectedToPoweredCycle=w=>{
+            const a=this.wireEndKey(w,'start'),b=this.wireEndKey(w,'end');
+            if(!a||!b||a===b)return false;
+            const queue=[[a,false]],visited=new Set([a+':0']);
+            for(let i=0;i<queue.length;i++){
+                const [node,hasSource]=queue[i];
+                if(node===b&&hasSource)return true;
+                for(const item of graph.get(node)||[]){
+                    // Evaluate the alternate return route, never the wire itself.
+                    if((node===a&&item.to===b||node===b&&item.to===a)&&!item.source){
+                        // This fast skip is safe for our short visual branches:
+                        // a parallel direct lead remains eligible through its
+                        // other, source-containing return route.
+                        continue;
+                    }
+                    const source=hasSource||item.source,key=item.to+':'+(source?1:0);
+                    if(!visited.has(key)){visited.add(key);queue.push([item.to,source]);}
+                }
+            }
+            return false;
+        };
+        for(const w of electricalWires){
+            const mag=Math.abs(w._flowMag||0);
+            w._weakFlowValid=!w._flowAmbiguous&&mag>noiseFloor&&mag<=1e-4&&connectedToPoweredCycle(w);
+        }
+    }
+
     // Faint arrows distinguish extremely small currents (notably the
     // 1 MΩ voltmeter branch) from the ordinary bright load current.
     drawWeakNetworkFlow() {
         const ctx=this.ctx;ctx.save();ctx.globalAlpha*=.4;
         for(const w of this.activeWires()){
             const magnitude=Math.abs(w._flowMag||0);
-            if(w._flowAmbiguous||magnitude<=1e-10||magnitude>1e-4)continue;
+            if(w._flowAmbiguous||!w._weakFlowValid||magnitude>1e-4)continue;
             const path=this.viewMode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w);
             this.drawFlow(w,path);
         }
@@ -3011,7 +3082,7 @@ class CircuitSimulator {
         if(this.dragging||this.draggingControlPoint){
             for(const w of this.activeWires()){
                 const magnitude=Math.abs(w._flowMag||0);
-                if(w._flowAmbiguous||magnitude<=1e-10)continue;
+                if(w._flowAmbiguous||(magnitude<=1e-4?!w._weakFlowValid:magnitude<=1e-4))continue;
                 this.ctx.save();
                 if(magnitude<=1e-4)this.ctx.globalAlpha*=.4;
                 const points=this.viewMode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w);
