@@ -14,6 +14,19 @@ const cleanComponent=c=>Object.fromEntries(componentFields.filter(k=>c[k]!==unde
 const cleanWire=w=>({start:clone(w.start),end:clone(w.end),bends:clone(w.bends||[]),realBends:w.realBends?clone(w.realBends):null,view:w.view||'both',autoSchematic:!!w.autoSchematic,...(w.fault?{fault:w.fault}:{}),...(w.reverseBackup?{reverseBackup:clone(w.reverseBackup)}:{}),...(w.editControls?{editControls:clone(w.editControls)}:{})});
 const uid=c=>`${c.label||COMPONENT_DEFS[c.type].name} (${c.id})`;
 const blankClassroom=()=>({records:[],recordU:null,recordI:null,predictionHidden:false,predictionText:'',faultHidden:false});
+function validateEditControls(raw) {
+ requireValid(raw&&typeof raw==='object'&&!Array.isArray(raw),'导线控制点数据无效。');
+ requireValid(Object.keys(raw).every(k=>['real','schematic'].includes(k)),'导线控制点视图无效。');
+ const result={};
+ for(const mode of Object.keys(raw)){
+  const item=raw[mode];
+  requireValid(item&&typeof item==='object'&&!Array.isArray(item),'导线控制点数据无效。');
+  requireValid(Array.isArray(item.points)&&item.points.length===3&&item.points.every(p=>p&&finite(p.x)&&finite(p.y)),'每根导线必须具有3个有效控制点。');
+  requireValid(typeof item.manual==='boolean'&&(item.sampled===undefined||typeof item.sampled==='boolean'),'导线控制点状态无效。');
+  result[mode]={points:item.points.map(p=>({x:p.x,y:p.y})),manual:item.manual,sampled:!!item.sampled};
+ }
+ return result;
+}
 function validateGraph(graph) {
  requireValid(graph&&Array.isArray(graph.components)&&graph.components.length<=150&&Array.isArray(graph.wires)&&graph.wires.length<=500,'元件或导线数据不完整，最多支持 150 个元件、500 根导线。');
  const ids=new Map();
@@ -50,21 +63,9 @@ function validateGraph(graph) {
   requireValid(['schematic','real','both',undefined].includes(w.view),'导线视图无效。');
   requireValid(w.autoSchematic===undefined||typeof w.autoSchematic==='boolean','导线整理设置无效。');
   requireValid(w.fault===undefined||w.fault==='open','导线故障类型无效。');
-  let editControls;
-  if(w.editControls!==undefined){
-   requireValid(w.editControls&&typeof w.editControls==='object'&&!Array.isArray(w.editControls),'导线控制点数据无效。');
-   requireValid(Object.keys(w.editControls).every(k=>['real','schematic'].includes(k)),'导线控制点视图无效。');
-   editControls={};
-   for(const mode of Object.keys(w.editControls)){
-    const item=w.editControls[mode];
-    requireValid(item&&typeof item==='object'&&!Array.isArray(item),'导线控制点数据无效。');
-    requireValid(Array.isArray(item.points)&&item.points.length===3&&item.points.every(p=>p&&finite(p.x)&&finite(p.y)),'每根导线必须具有3个有效控制点。');
-    requireValid(typeof item.manual==='boolean'&&(item.sampled===undefined||typeof item.sampled==='boolean'),'导线控制点状态无效。');
-    editControls[mode]={points:points(item.points),manual:item.manual,sampled:!!item.sampled};
-   }
-  }
+  const editControls=w.editControls===undefined?undefined:validateEditControls(w.editControls);
   let backup;
-  if(w.reverseBackup){const b=w.reverseBackup;requireValid(ids.get(b.owner)?.type==='ammeter'&&[w.start.compId,w.end.compId].includes(b.owner)&&typeof b.autoSchematic==='boolean','反接导线备份无效。');backup={owner:b.owner,bends:points(b.bends),realBends:b.realBends===null?null:points(b.realBends),autoSchematic:b.autoSchematic};}
+  if(w.reverseBackup){const b=w.reverseBackup;requireValid(ids.get(b.owner)?.type==='ammeter'&&[w.start.compId,w.end.compId].includes(b.owner)&&typeof b.autoSchematic==='boolean','反接导线备份无效。');backup={owner:b.owner,bends:points(b.bends),realBends:b.realBends===null?null:points(b.realBends),autoSchematic:b.autoSchematic,...(b.editControls?{editControls:validateEditControls(b.editControls)}:{})};}
   return {...cleanWire(w),bends:points(w.bends||[]),realBends:w.realBends===null||w.realBends===undefined?null:points(w.realBends),...(backup?{reverseBackup:backup}:{}),...(editControls?{editControls}:{})};
  });
  return {components,wires};
@@ -139,7 +140,7 @@ Object.assign(CircuitSimulator.prototype, {
   this.viewMode=data.viewMode;Object.assign(this,data.camera);this.activeExperiment=data.activeExperiment;this.schematicReference=data.schematicReference;
   this.darkMode=data.darkMode;this.showGrid=data.showGrid;this.showPotPrinciple=data.showPotPrinciple;this.restoreClassroom(data.classroom);
   this._realLayoutSignature=null;this._schematicLayoutSignature=null;this._routeKey=null;this._routes=null;this._flowGeometryKey=null;
-  this.selectedComponent=null;this.selectedWire=null;this.dragging=false;this.wireDrawing=false;this.draftWire=null;
+  this.selectedComponent=null;this.selectedWire=null;this.dragging=false;this.draggingControlPoint=null;this.isPanning=false;this._switchPress=null;this._dragBaseline=null;this._dragOrigin=null;this.wireDrawing=false;this.draftWire=null;
   this._recoveryPending=false;this._recoveryData=null;if(byId('recovery-banner'))byId('recovery-banner').hidden=true;if(byId('classroom-status'))byId('classroom-status').textContent='实验已恢复，自动保存已开启';
   this.applyTheme();try{localStorage.setItem('elec-lab-theme',this.darkMode?'dark':'light');}catch(_){}
   this.syncViewButton();this.togglePotPrinciple(this.showPotPrinciple);this.restoreGuide();this.updateMiniSchematicVisibility();this.updatePropertiesPanel();this.recalc();
@@ -303,7 +304,16 @@ Object.assign(CircuitSimulator.prototype, {
  },
  swapMeterConnections(comp,restore=false) {
   const positive=this.meterActiveTerminal(comp).id;
-  const swap=w=>{if(!restore)w.reverseBackup={owner:comp.id,bends:clone(w.bends||[]),realBends:w.realBends?clone(w.realBends):null,autoSchematic:!!w.autoSchematic};for(const end of [w.start,w.end])if(end.compId===comp.id){if(end.termId==='neg')end.termId=positive;else if(end.termId===positive)end.termId='neg';}if(restore&&w.reverseBackup?.owner===comp.id){w.bends=w.reverseBackup.bends;w.realBends=w.reverseBackup.realBends;w.autoSchematic=w.reverseBackup.autoSchematic;delete w.reverseBackup;}else{w.bends=[];w.realBends=null;w.autoSchematic=true;}};
+  const swap=w=>{
+   if(!restore)w.reverseBackup={owner:comp.id,bends:clone(w.bends||[]),realBends:w.realBends?clone(w.realBends):null,autoSchematic:!!w.autoSchematic,...(w.editControls?{editControls:clone(w.editControls)}:{})};
+   for(const end of [w.start,w.end])if(end.compId===comp.id){if(end.termId==='neg')end.termId=positive;else if(end.termId===positive)end.termId='neg';}
+   if(restore&&w.reverseBackup?.owner===comp.id){
+    const backup=w.reverseBackup;w.bends=backup.bends;w.realBends=backup.realBends;w.autoSchematic=backup.autoSchematic;
+    if(backup.editControls)w.editControls=clone(backup.editControls);else delete w.editControls;
+    delete w.reverseBackup;
+   }else{w.bends=[];w.realBends=null;w.autoSchematic=true;delete w.editControls;}
+   w._realSmoothCache=null;delete w._realEditRevision;
+  };
   this.wires.filter(w=>[w.start.compId,w.end.compId].includes(comp.id)).forEach(swap);
   if(this.schematicReference){this.schematicReference.wires.filter(w=>[w.start.compId,w.end.compId].includes(comp.id)).forEach(swap);}
  },

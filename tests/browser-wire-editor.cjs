@@ -58,6 +58,19 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.equal(measured.perf.solve,0,'drag must not trigger an electrical solve');
   assert.equal(measured.perf.globalRoute,0,'drag must not trigger whole-network routing');
   assert.equal(measured.points,3);
+  // Releasing outside the canvas used to leave the editor in dragging mode.
+  const outside=await page.evaluate(()=>{
+   const c=sim.components.find(x=>x.type==='resistor'),p=sim.componentPos(c),r=sim.canvas.getBoundingClientRect();
+   return {x:r.left+sim.panX+p.x*sim.scale,y:r.top+sim.panY+p.y*sim.scale,top:r.top};
+  });
+  const controlsBefore=await page.evaluate(()=>JSON.stringify(sim.wires[0].editControls.real));
+  await page.mouse.move(outside.x,outside.y);await page.mouse.down();
+  await page.mouse.move(outside.x+20,outside.y+10,{steps:3});
+  await page.mouse.move(outside.x,outside.top-10);await page.mouse.up();
+  assert.deepEqual(await page.evaluate(()=>({dragging:sim.dragging,control:sim.draggingControlPoint,baseline:sim._dragBaseline})),
+   {dragging:false,control:null,baseline:null});
+  assert.equal(await page.evaluate(()=>JSON.stringify(sim.wires[0].editControls.real)),controlsBefore);
+  console.log('PASS Chromium: mouse release outside canvas completes drag and preserves manual controls');
   // Real Canvas: opening a series switch must remove every current arrow.
   const switchStates=await page.evaluate(()=>{
     const s=sim;s.clearAll();s.viewMode='real';s.currentTool='select';
@@ -90,6 +103,18 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.equal(switchStates.openAgain.ampere,0,'open switch shows zero current');
   assert.equal(switchStates.openAgain.poweredWires,0);
   console.log('PASS Chromium: real canvas open -> closed -> open clears animated current paths');
+  const uniform=await page.evaluate(()=>{
+   const s=sim;s.clearAll();s.viewMode='real';s.flowPhase=.3;
+   const oldResolve=s.resolveRealWire,oldArrow=s.drawFlowArrow;
+   const wires=[{_flowNet:'n',_flowMag:1,_flowDir:1,points:[{x:0,y:0},{x:500,y:0}]},
+    {_flowNet:'n',_flowMag:1,_flowDir:-1,points:[{x:120,y:0},{x:380,y:0}]}];
+   const marks=[];s.wires=wires;s.resolveRealWire=w=>w.points;
+   s.drawFlowArrow=function(p,a){marks.push(p.x);return oldArrow.call(this,p,a);};
+   try{s.drawNetworkFlow();return {count:marks.length,middle:marks.some(x=>x>200&&x<300)};}
+   finally{s.wires=[];s.resolveRealWire=oldResolve;s.drawFlowArrow=oldArrow;s.recalc();}
+  });
+  assert.ok(uniform.count>25&&uniform.middle,'actual Canvas paints the formerly blank overlap');
+  console.log('PASS Chromium: physical lead overlap retains uniformly distributed current arrows');
   assert.deepEqual(errors,[]);
   console.log('PASS Chromium: drag exactly three handles, JSON roundtrip, component drag and zero repeated solve/routing');
  }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

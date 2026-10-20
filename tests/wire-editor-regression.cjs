@@ -122,3 +122,32 @@ console.log('PASS wire editor: 3 handles, per-view JSON, legacy import, invalid 
  assert.equal(shape.resolveRealWire(testWire),actual);
  console.log('PASS manual real wires stay smooth at three exact control handles');
 }
+
+// Moving either endpoint must retain the route a teacher deliberately edited.
+for(const mode of ['real','schematic']){
+ s.viewMode=mode;s.selectedComponent=r;s.dragging=false;
+ const handles=s.wireControlPoints(w);s.moveWireControlPoint(w,1,handles[1].x+20,handles[1].y-20);
+ const saved=JSON.stringify(w.editControls[mode]),bends=JSON.stringify(mode==='real'?w.realBends:w.bends);
+ s.beginDragPreview(r);s.dragging=true;
+ if(mode==='real')r.realX+=80;else r.x+=80;
+ const preview=s.dragPreviewPath(w);
+ for(const h of w.editControls[mode].points)assert.ok(preview.some(p=>Math.hypot(p.x-h.x,p.y-h.y)<1e-7));
+ s.finishDragPreview();s.dragging=false;
+ assert.equal(JSON.stringify(w.editControls[mode]),saved,'drag must not move manual handles');
+ assert.equal(JSON.stringify(mode==='real'?w.realBends:w.bends),bends,'drag must not resample a manual route');
+ const actual=mode==='real'?s.resolveRealWire(w):s.resolveWire(w);
+ assert.equal(actual.at(-1).x,s.wireEndPos(w,'end').x);
+}
+console.log('PASS both views retain manual controls and bends while dragged terminal endpoints follow');
+// Explicit rearrangement replaces that view's editor state, leaving the other view intact.
+for(const mode of ['real','schematic']){
+ s.viewMode=mode;
+ const other=mode==='real'?'schematic':'real';
+ const keep=JSON.stringify(w.editControls[other]);
+ s.layoutCircuit(true,mode==='real');
+ assert.equal(w.editControls?.[mode],undefined);
+ assert.equal(JSON.stringify(w.editControls?.[other]),keep);
+ const actual=mode==='real'?s.resolveRealWire(w):s.resolveWire(w);
+ assert.deepEqual(JSON.parse(JSON.stringify(s.wireControlPoints(w))),JSON.parse(JSON.stringify(s.wireQuarterPoints(actual))));
+}
+console.log('PASS rearrangement clears obsolete handles only in the rearranged view');
