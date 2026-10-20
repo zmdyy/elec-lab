@@ -58,6 +58,38 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.equal(measured.perf.solve,0,'drag must not trigger an electrical solve');
   assert.equal(measured.perf.globalRoute,0,'drag must not trigger whole-network routing');
   assert.equal(measured.points,3);
+  // Real Canvas: opening a series switch must remove every current arrow.
+  const switchStates=await page.evaluate(()=>{
+    const s=sim;s.clearAll();s.viewMode='real';s.currentTool='select';
+    const b=s.createComponent('battery',{x:120,y:120,voltage:3});
+    const sw=s.createComponent('switch',{x:320,y:120});
+    const r=s.createComponent('resistor',{x:520,y:260,resistance:10});
+    const a=s.createComponent('ammeter',{x:120,y:320});
+    for(const c of s.components){c.realX=c.x;c.realY=c.y;}
+    sw.state='open';
+    const connect=(c,t,d,u)=>s.connectTerminals(c,t,d,u,[],'both');
+    connect(b,'pos',sw,'a');connect(sw,'b',r,'a');
+    connect(r,'b',a,'r0_6');connect(a,'neg',b,'neg');
+    let arrows=0;
+    const oldDrawFlow=s.drawFlow.bind(s);
+    s.drawFlow=(...args)=>{arrows++;return oldDrawFlow(...args);};
+    const state=()=>{
+      arrows=0;s.solveCircuit();
+      return {arrows,ampere:a.measurement,solution:s._solutionState,
+        poweredWires:s.wires.filter(w=>w._weakFlowValid).length};
+    };
+    const openBefore=state();
+    sw.state='closed';const closed=state();
+    sw.state='open';const openAgain=state();
+    return {openBefore,closed,openAgain};
+  });
+  assert.equal(switchStates.openBefore.arrows,0,'open real-view circuit shows no arrows');
+  assert.ok(switchStates.closed.arrows>0,'closing the switch shows current arrows');
+  assert.ok(switchStates.closed.ampere>.001,'closed circuit ammeter indicates current');
+  assert.equal(switchStates.openAgain.arrows,0,'reopening clears every current arrow');
+  assert.equal(switchStates.openAgain.ampere,0,'open switch shows zero current');
+  assert.equal(switchStates.openAgain.poweredWires,0);
+  console.log('PASS Chromium: real canvas open -> closed -> open clears animated current paths');
   assert.deepEqual(errors,[]);
   console.log('PASS Chromium: drag exactly three handles, JSON roundtrip, component drag and zero repeated solve/routing');
  }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
