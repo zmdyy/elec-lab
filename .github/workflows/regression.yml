@@ -7,16 +7,21 @@ on:
 jobs:
   regression:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        test:
+          - wire-editor-regression.cjs
+          - circuit-regression.cjs
+          - classroom-regression.cjs
+          - flow-regression.cjs
+          - devices-regression.cjs
+          - interface-regression.cjs
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Run offline regression suite
-        run: |
-          node tests/circuit-regression.cjs
-          node tests/classroom-regression.cjs
-          node tests/flow-regression.cjs
-          node tests/devices-regression.cjs
-          node tests/interface-regression.cjs
-          node tests/wire-editor-regression.cjs
+      - name: Run regression test
+        run: node tests/${{ matrix.test }}
