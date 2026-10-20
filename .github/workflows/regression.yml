@@ -38,4 +38,6 @@ jobs:
           npm install --no-save playwright
           npx playwright install --with-deps chromium
       - name: Browser wire regression
-        run: node tests/browser-wire-editor.cjs
+        run: |
+          node tests/browser-wire-editor.cjs
+          node tests/browser-performance.cjs
