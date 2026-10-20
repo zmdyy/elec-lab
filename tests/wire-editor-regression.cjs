@@ -15,7 +15,7 @@ vm.runInContext(fs.readFileSync(path.join(__dirname,'../classroom.js'),'utf8'),s
 const s=Object.create(sandbox.Simulator.prototype);
 Object.assign(s,{components:[],wires:[],idCounter:0,viewMode:'real',simulationRunning:true,
  scale:1,panX:0,panY:0,gridSize:20,darkMode:false,showGrid:true,showPotPrinciple:false,activeExperiment:null,
- canvas:{getBoundingClientRect:()=>({left:0,top:0})},undoStack:[],maxUndo:6,suppressUndo:true});
+ canvas:{style:{},getBoundingClientRect:()=>({left:0,top:0})},undoStack:[],maxUndo:6,suppressUndo:true});
 for(const n of ['draw','recalc','updatePropertiesPanel','updateCircuitInfo','resizeCanvas','drawMiniSchematic'])s[n]=()=>{};
 s.restoreClassroom();
 const b=s.createComponent('battery',{x:120,y:160}),r=s.createComponent('resistor',{x:360,y:160});
