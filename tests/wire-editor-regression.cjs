@@ -83,3 +83,42 @@ assert.equal(audited,true,'a moved unconnected component must audit an obstructe
 const line=Array.from({length:49},(_,i)=>({x:i*10,y:20}));
 assert.equal(s.simplifyRoutePoints(line).length,2,'local route obstacle geometry should be simplified');
 console.log('PASS wire editor: 3 handles, per-view JSON, legacy import, invalid data, redraw coalescing and electric-free dragging');
+
+// Regression: an edited curve may store 47 dense route samples, but its three
+// orange handles must remain exact while the sharp joins become C1-smooth.
+{
+ const source=Array.from({length:49},(_,i)=>{
+  const x=20+i*10;
+  const anchors=[0,12,24,36,48],heights=[0,95,-80,110,0];
+  let k=0;while(k<3&&i>anchors[k+1])k++;
+  const t=(i-anchors[k])/(anchors[k+1]-anchors[k]);
+  return {x,y:heights[k]*(1-t)+heights[k+1]*t};
+ });
+ const handles=[12,24,36].map(k=>({...source[k]}));
+ const testWire={
+   start:{compId:'C0',termId:'pos'},end:{compId:'C1',termId:'a'},
+   realBends:source.slice(1,-1).map(p=>({...p})),
+   editControls:{real:{points:handles,manual:true,sampled:true}}
+ };
+ const shape=Object.create(sandbox.Simulator.prototype);
+ shape.viewMode='real';shape.wireEndPos=(_w,end)=>end==='start'?source[0]:source[48];
+ const actual=shape.resolveRealWire(testWire);
+ assert.equal(actual._sampled,true);
+ assert.equal(actual.length,49);
+ for(let n=0;n<3;n++){
+  const i=(n+1)*12;
+  assert.ok(Math.hypot(actual[i].x-handles[n].x,actual[i].y-handles[n].y)<1e-8,
+     'smoothing must not move a user control point');
+ }
+ const kink=(points,i)=>{
+  const a=points[i-1],b=points[i],c=points[i+1];
+  const v=[b.x-a.x,b.y-a.y],w=[c.x-b.x,c.y-b.y];
+  return Math.acos(Math.max(-1,Math.min(1,(v[0]*w[0]+v[1]*w[1])/(Math.hypot(...v)*Math.hypot(...w)))));
+ };
+ for(const i of [12,24,36]){
+  assert.ok(kink(actual,i)<kink(source,i)*.3,'control-point kink should become a gentle curve');
+ }
+ // The editable control path and export/display path must match after cache hit.
+ assert.equal(shape.resolveRealWire(testWire),actual);
+ console.log('PASS manual real wires stay smooth at three exact control handles');
+}
