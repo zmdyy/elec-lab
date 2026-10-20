@@ -1888,7 +1888,10 @@ class CircuitSimulator {
     }
 
     deleteSelected() {
+        if(!this.selectedComponent&&!this.selectedWire)return;
         this.saveUndo();
+        // Deleting one object must not cause the remaining routes to jump.
+        this.freezeAutoWirePaths();
         if (this.selectedComponent) {
             const id = this.selectedComponent.id;
             this.components = this.components.filter(c => c.id !== id);
