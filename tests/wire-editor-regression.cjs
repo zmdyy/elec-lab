@@ -104,9 +104,9 @@ console.log('PASS wire editor: 3 handles, per-view JSON, legacy import, invalid 
  shape.viewMode='real';shape.wireEndPos=(_w,end)=>end==='start'?source[0]:source[48];
  const actual=shape.resolveRealWire(testWire);
  assert.equal(actual._sampled,true);
- assert.equal(actual.length,49);
+ assert.equal(actual.length,145);
  for(let n=0;n<3;n++){
-  const i=(n+1)*12;
+  const i=(n+1)*36;
   assert.ok(Math.hypot(actual[i].x-handles[n].x,actual[i].y-handles[n].y)<1e-8,
      'smoothing must not move a user control point');
  }
@@ -116,7 +116,7 @@ console.log('PASS wire editor: 3 handles, per-view JSON, legacy import, invalid 
   return Math.acos(Math.max(-1,Math.min(1,(v[0]*w[0]+v[1]*w[1])/(Math.hypot(...v)*Math.hypot(...w)))));
  };
  for(const i of [12,24,36]){
-  assert.ok(kink(actual,i)<kink(source,i)*.3,'control-point kink should become a gentle curve');
+  assert.ok(kink(actual,i*3)<kink(source,i)*.3,'control-point kink should become a gentle curve');
  }
  // The editable control path and export/display path must match after cache hit.
  assert.equal(shape.resolveRealWire(testWire),actual);
