@@ -680,20 +680,23 @@ class CircuitSimulator {
     /* ---------- 接线柱几何 ---------- */
     terminals(comp) {
         if (this.viewMode === 'schematic') {
+            // Define terminal locations in world-grid units, then undo only
+            // the artwork scale. Body size and physical-view geometry stay intact.
+            const unit=(this.gridSize||20)/this.componentSize(comp);
             if(comp.type==='potentiometer') {
-                const {fixed,upperX}=this.potSymbolGeometry(comp);
-                return [{id:'a',x:-48,y:24,hidden:fixed!=='a'&&!this.isTerminalConnected(comp,'a')},
-                    {id:'b',x:48,y:24,hidden:fixed!=='b'&&!this.isTerminalConnected(comp,'b')},
-                    {id:'c',x:upperX,y:-28,hidden:this.isTerminalConnected(comp,'d')&&!this.isTerminalConnected(comp,'c')},
-                    {id:'d',x:upperX,y:-28,hidden:!this.isTerminalConnected(comp,'d')}];
+                const {fixed,upperX,lowerY,upperY}=this.potSymbolGeometry(comp);
+                return [{id:'a',x:-3*unit,y:lowerY,hidden:fixed!=='a'&&!this.isTerminalConnected(comp,'a')},
+                    {id:'b',x:3*unit,y:lowerY,hidden:fixed!=='b'&&!this.isTerminalConnected(comp,'b')},
+                    {id:'c',x:upperX,y:upperY,hidden:this.isTerminalConnected(comp,'d')&&!this.isTerminalConnected(comp,'c')},
+                    {id:'d',x:upperX,y:upperY,hidden:!this.isTerminalConnected(comp,'d')}];
             }
-            if (comp.type === 'bulb') return [ {id:'shell', x:-32, y:0}, {id:'tip', x:32, y:0} ];
-            if (comp.type === 'ammeter') return [
-                {id:'r0_6', x:32, y:0}, {id:'r3', x:32, y:0}, {id:'neg', x:-32, y:0}
-            ];
-            if (comp.type === 'voltmeter') return [
-                {id:'r3', x:32, y:0}, {id:'r15', x:32, y:0}, {id:'neg', x:-32, y:0}
-            ];
+            const pair=(a,b)=>[{id:a,x:-2*unit,y:0},{id:b,x:2*unit,y:0}];
+            if(comp.type==='battery')return pair('neg','pos');
+            if(comp.type==='bulb')return pair('shell','tip');
+            if(comp.type==='ammeter')return [{id:'r0_6',x:2*unit,y:0},{id:'r3',x:2*unit,y:0},{id:'neg',x:-2*unit,y:0}];
+            if(comp.type==='voltmeter')return [{id:'r3',x:2*unit,y:0},{id:'r15',x:2*unit,y:0},{id:'neg',x:-2*unit,y:0}];
+            if(comp.type==='bell')return [{id:'a',x:-unit,y:2*unit},{id:'b',x:unit,y:2*unit}];
+            return pair('a','b');
         } else {
             if(comp.type==='led')return [{id:'a',x:-14,y:58},{id:'b',x:14,y:46}];
             if(comp.type==='motor')return [{id:'a',x:-48,y:39},{id:'b',x:48,y:39}];
@@ -723,9 +726,10 @@ class CircuitSimulator {
         const flip=(this.viewMode==='real'?comp.realFlipX:comp.schematicFlipX)?-1:1;
         const cos = Math.cos(ang), sin = Math.sin(ang);
         const base = this.componentPos(comp);
+        const offset=v=>this.viewMode==='schematic'&&Math.abs(this.componentAngle(comp)/90-Math.round(this.componentAngle(comp)/90))<1e-10?this.snap(v):v;
         return this.terminals(comp).map(t => ({
-            x: base.x + size*(flip*t.x * cos - t.y * sin),
-            y: base.y + size*(flip*t.x * sin + t.y * cos),
+            x: base.x + offset(size*(flip*t.x * cos - t.y * sin)),
+            y: base.y + offset(size*(flip*t.x * sin + t.y * cos)),
             componentId: comp.id, terminalId: t.id, component: comp, hidden: !!t.hidden
         }));
     }
@@ -1133,7 +1137,22 @@ class CircuitSimulator {
             y: (e.clientY - r.top - this.panY) / this.scale
         };
     }
-    snap(v) { return Math.round(v / this.gridSize) * this.gridSize; }
+    snap(v) { const grid=this.gridSize||20;return Math.round(v/grid)*grid; }
+    snapSchematicComponent(comp) {
+        comp.x=this.snap(comp.x);comp.y=this.snap(comp.y);
+        const angle=this.componentAngle(comp),quarter=Math.round(angle/90)*90;
+        if(Math.abs(angle-quarter)>1e-10)comp.schematicRotation=quarter;
+    }
+    orthogonalDraftPoints(points) {
+        const out=[points[0]];
+        for(const point of points.slice(1)){
+            const previous=out.at(-1);
+            if(Math.abs(previous.x-point.x)>1e-7&&Math.abs(previous.y-point.y)>1e-7)
+                out.push(Math.abs(point.x-previous.x)>=Math.abs(point.y-previous.y)?{x:point.x,y:previous.y}:{x:previous.x,y:point.y});
+            if(Math.hypot(point.x-out.at(-1).x,point.y-out.at(-1).y)>1e-7)out.push(point);
+        }
+        return out;
+    }
 
     /* ---------- 鼠标事件 ---------- */
     switchHandleAt(x,y) {
@@ -1222,6 +1241,7 @@ class CircuitSimulator {
                         end: {compId: term.componentId, termId: term.terminalId}
                     });
                     if(this.viewMode==='real')this.routeNewWireLocally(this.wires.at(-1));
+                    else {const wire=this.wires.at(-1);wire.bends=this.orthogonalDraftPoints([this.wireEndPos(wire,'start'),...wire.bends,this.wireEndPos(wire,'end')]).slice(1,-1);}
                     this.rememberPotContacts(this.draftWire.start);
                     this.rememberPotContacts({compId:term.componentId,termId:term.terminalId});
                     this.wireDrawing = false; this.draftWire = null;
@@ -1259,13 +1279,13 @@ class CircuitSimulator {
         if (this.dragging && this.selectedComponent) {
             const nx = this.snap(x - this.dragOffset.x), ny = this.snap(y - this.dragOffset.y);
             if (this.viewMode === 'real') { this.selectedComponent.realX = nx; this.selectedComponent.realY = ny; }
-            else { this.selectedComponent.x = nx; this.selectedComponent.y = ny; }
+            else { this.selectedComponent.x = nx; this.selectedComponent.y = ny;this.snapSchematicComponent(this.selectedComponent); }
             this.requestDraw();
             return;
         }
         if (this.currentTool === 'wire') {
             const term = this.findTerminalAt(x, y);
-            this.draftPos = term ? {x: term.x, y: term.y} : {x, y};
+            this.draftPos = term ? {x: term.x, y: term.y} : this.viewMode==='schematic'?{x:this.snap(x),y:this.snap(y)}:{x,y};
             this.requestDraw();
         }
     }
@@ -1473,8 +1493,8 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
     layoutSchematicCircuit(force=false) { this.layoutCircuit(force,false); }
     potSymbolGeometry(comp) {
         const fixed=this.isTerminalConnected(comp,'b')&&!this.isTerminalConnected(comp,'a')?'b':'a';
-        return {fixed,fixedX:fixed==='b'?48:-48,upperX:comp.potUpperSide===-1?-48:comp.potUpperSide===1?48:fixed==='b'?-48:48,
-            sliderX:-25+50*comp.position};
+        const span=3*(this.gridSize||20)/1.3,level=2*(this.gridSize||20)/1.3;
+        return {fixed,fixedX:fixed==='b'?span:-span,upperX:comp.potUpperSide===-1?-span:comp.potUpperSide===1?span:fixed==='b'?-span:span,lowerY:level,upperY:-level,sliderX:-25+50*comp.position};
     }
     rememberPotContacts(endpoint) {
         const comp=this.components.find(c=>c.id===endpoint.compId);
@@ -1487,7 +1507,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
     optimizePotSymbolLeads(wires) {
         for(const c of this.components.filter(c=>c.type==='potentiometer')){
             const previous=c.potUpperSide;let best=Infinity,side=previous;
-            for(const candidate of new Set([previous??(this.potSymbolGeometry(c).upperX/48),-1,1])){
+            for(const candidate of new Set([previous??Math.sign(this.potSymbolGeometry(c).upperX),-1,1])){
                 c.potUpperSide=candidate;this._routeKey=null;
                 // Endpoint distance alone misses the large return loops caused by
                 // an exit on the wrong side of the symbol. Compare actual routes.
@@ -1580,7 +1600,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
             const groups=this.circuitGroups(this.activeWires().length?this.activeWires():this.wires.filter(w=>w.view!=='real'));
             if(groups.length<=1)return this.layoutCircuitGroup(force,real);
             const signatureKey=real?'_realLayoutSignature':'_schematicLayoutSignature';
-            const signature=()=>JSON.stringify(['independent-circuits-v1',this.components.map(c=>[c.id,c.type,c.potContactMode]),this.wires.map(w=>[w.start,w.end,w.view])]);
+            const signature=()=>JSON.stringify(['independent-circuits-v2-grid',this.components.map(c=>[c.id,c.type,c.potContactMode]),this.wires.map(w=>[w.start,w.end,w.view])]);
             if(!force&&this[signatureKey]===signature())return;
             let left=140;const packedRoutes=new Map();
             for(const group of groups){
@@ -1592,7 +1612,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
                 const points=[...paths.values()].flat();
                 const minX=Math.min(...boxes.map(b=>b.left),...points.map(p=>p.x)),maxX=Math.max(...boxes.map(b=>b.right),...points.map(p=>p.x));
                 const minY=Math.min(...boxes.map(b=>b.top),...points.map(p=>p.y));
-                const dx=left-minX,dy=100-minY;
+                const grid=this.gridSize||20,dx=real?left-minX:Math.ceil((left-minX)/grid)*grid,dy=real?100-minY:Math.ceil((100-minY)/grid)*grid;
                 for(const c of group.components){if(real){c.realX+=dx;c.realY+=dy;}else{c.x+=dx;c.y+=dy;}}
                 for(const w of group.wires){
                     const bends=real?'realBends':'bends',lane=real?'_realLaneX':'_schematicLaneX';
@@ -1601,7 +1621,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
                     delete w._realSmoothCache;
                 }
                 for(const [w,path] of paths){const moved=path.map(p=>({x:p.x+dx,y:p.y+dy}));if(path._sampled)moved._sampled=true;if(path._arcSampled)moved._arcSampled=true;packedRoutes.set(w,moved);}
-                left+=maxX-minX+180;
+                left=maxX+dx+180;
             }
             this[signatureKey]=signature();this._routes=packedRoutes;this._routeKey=this.routingGeometryKey();this._schematicFrame=null;
         } finally {this._routingSync=previous;}
@@ -1609,9 +1629,9 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
     layoutCircuitGroup(force,real) {
         // Reduce topology before placement. Real orientations stay fixed; schematic meters adapt their leads to vertical sides.
         const signatureKey=real?'_realLayoutSignature':'_schematicLayoutSignature';
-        const put=(c,x,y)=>{if(real){c.realX=x;c.realY=y;c.realFlipX=false;}else{c.x=x;c.y=y;c.schematicFlipX=false;}};
+        const put=(c,x,y)=>{if(real){c.realX=x;c.realY=y;c.realFlipX=false;}else{c.x=x;c.y=y;c.schematicFlipX=false;this.snapSchematicComponent(c);}};
         const wires=this.activeWires().length?this.activeWires():this.wires.filter(w=>w.view!=='real');
-        const makeSignature=()=>JSON.stringify(['classroom-frame-v11',this.components.map(c=>[c.id,c.type,c.potContactMode]),wires.map(w=>[w.start,w.end])]);
+        const makeSignature=()=>JSON.stringify(['classroom-frame-v12-grid',this.components.map(c=>[c.id,c.type,c.potContactMode]),wires.map(w=>[w.start,w.end])]);
         const signature=makeSignature();
         if(!force&&this[signatureKey]===signature)return;
         this[signatureKey]=signature;
@@ -1742,7 +1762,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
                     const size=measure(e);
                     const combine=boxes=>({top:Math.min(...boxes.map(b=>b.top)),bottom:Math.max(...boxes.map(b=>b.bottom))});
                     if(e.kind==='leaf'){
-                        put(e.comp,x+size.w/2,y-(e.comp.type==='potentiometer'?24*1.3:0));placed.add(e.comp.id);return this.realComponentBox(e.comp,20);
+                        put(e.comp,x+size.w/2,y-(e.comp.type==='potentiometer'?this.potSymbolGeometry(e.comp).lowerY*this.componentSize(e.comp):0));placed.add(e.comp.id);return this.realComponentBox(e.comp,20);
                     }
                     if(e.kind==='parallel'){
                         const isV=e=>e.kind==='leaf'&&e.comp.type==='voltmeter';
@@ -1763,7 +1783,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
                 topRight.forEach((s,i)=>{put(s.e.comp,center+160+i*160,top);placed.add(s.e.comp.id);});
                 topLeft.forEach((s,i)=>{put(s.e.comp,center-160*(topLeft.length-i),top);placed.add(s.e.comp.id);});
                 put(battery,center,top);placed.add(battery.id);
-                this._schematicFrame={left,right,top,bottom};
+                this._schematicFrame={left:this.snap(left),right:this.snap(right),top:this.snap(top),bottom:this.snap(bottom)};
             }
             wires.forEach(w=>{const n=find(this.wireEndKey(w,'start'));w[real?'_realLaneX':'_schematicLaneX']=n===source?(rightToLeft?140+d.w+65:75):n===target?(rightToLeft?75:140+d.w+65):null;});
             this._realLayoutKind='series-parallel';
@@ -1836,8 +1856,9 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
         const p=comp.position,paths=[],add=(points,current)=>{if(Math.abs(current)>1e-6)paths.push({points:current>0?points:[...points].reverse(),current:Math.abs(current)});};
         const principle=view==='principle',real=view==='real';
         const left=principle?150:real?-64:-25,right=principle?450:real?64:25;
-        const x=left+(right-left)*p,y=principle?210:real?19:24,top=principle?55:real?-30:-28;
-        const ax=principle?80:real?-76:-48,bx=principle?520:real?76:48;
+        const symbol=this.potSymbolGeometry(comp);
+        const x=left+(right-left)*p,y=principle?210:real?19:symbol.lowerY,top=principle?55:real?-30:symbol.upperY;
+        const ax=principle?80:real?-76:-Math.abs(symbol.fixedX),bx=principle?520:real?76:Math.abs(symbol.fixedX);
         const resistance=(from,to)=>{const pts=[];const count=Math.max(1,Math.ceil(Math.abs(to-from)/3));for(let i=0;i<=count;i++){const xx=from+(to-from)*i/count;pts.push({x:xx,y:y+(principle?(()=>{const u=(xx-150)/12.5,k=Math.floor(u),t=u-k;return (k%2?28:-28)*t*(1-t);})():0)});}return pts;};
         const aEdge=left,bEdge=right;
         add([{x:ax,y:real?24:y},{x:aEdge,y},...resistance(aEdge,x)],comp._potI1||0);
@@ -2060,6 +2081,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
         ['voltage','resistance','ratedCurrent','forwardVoltage','position','state','range','rotation','label','labelMode','bulbModel','experimentRole','controlVoltage']
             .forEach(k => { if (props[k] !== undefined) comp[k] = props[k]; });
         comp.labelMode = props.labelMode || (props.label ? 'custom' : 'auto');
+        if(this.viewMode==='schematic')this.snapSchematicComponent(comp);
         this.components.push(comp);
         this.refreshAutoNames();
         this.selectedComponent = comp; this.selectedWire = null;
@@ -2074,7 +2096,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
         this.saveUndo();
         const key=this.viewMode==='real'?'realRotation':'rotation';
         this.selectedComponent[key]=(this.componentAngle(this.selectedComponent)+90)%360;
-        if(this.viewMode==='schematic')delete this.selectedComponent.schematicRotation;
+        if(this.viewMode==='schematic'){delete this.selectedComponent.schematicRotation;this.snapSchematicComponent(this.selectedComponent);}
         this.recalc();
     }
 
@@ -2743,10 +2765,12 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
         if((this.viewMode==='real'?comp.realFlipX:comp.schematicFlipX))dx=-dx;
         const a=this.componentAngle(comp)*Math.PI/180;
         const vx=dx*Math.cos(a)-dy*Math.sin(a),vy=dx*Math.sin(a)+dy*Math.cos(a);
-        const box=this.realComponentBox(comp,22);
-        let d=dist;
+        const box=this.realComponentBox(comp,this.viewMode==='schematic'?10:22);
+        let d=this.viewMode==='schematic'&&dist===28?(this.gridSize||20):dist;
         while(this.pointInBox({x:pos.x+vx*d,y:pos.y+vy*d},box)) d+=4;
-        return {x:pos.x+vx*d,y:pos.y+vy*d};
+        const out={x:pos.x+vx*d,y:pos.y+vy*d};
+        if(this.viewMode==='schematic'){const grid=this.gridSize||20;if(Math.abs(vx)>.99)out.x=(vx>0?Math.ceil(out.x/grid):Math.floor(out.x/grid))*grid;if(Math.abs(vy)>.99)out.y=(vy>0?Math.ceil(out.y/grid):Math.floor(out.y/grid))*grid;}
+        return out;
     }
 
     trimWireSegment(a,b,shared,radius=24) {
@@ -3132,7 +3156,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
         w._routeBlocked=false;
         const a=this.terminalOutPoint(w.start.compId,w.start.termId,start);
         const b=this.terminalOutPoint(w.end.compId,w.end.termId,end);
-        const boxes=this.components.map(c=>this.realComponentBox(c,20));
+        const boxes=this.components.map(c=>this.realComponentBox(c,this.viewMode==='schematic'?10:20));
         if(boxes.some(box=>(box.comp.id!==w.start.compId&&this.segmentIntersectsBox(start,a,box))||(box.comp.id!==w.end.compId&&this.segmentIntersectsBox(b,end,box)))){
             w._routeBlocked=true;return [start,start];
         }
@@ -3146,7 +3170,8 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
         const xs=[a.x,b.x], ys=[a.y,b.y];
         boxes.forEach(r=>{xs.push(r.left-18,r.right+18);ys.push(r.top-18,r.bottom+18);});
         occupied.forEach(([p,q])=>{if(Math.abs(p.x-q.x)<.01) xs.push(p.x-20,p.x+20);if(Math.abs(p.y-q.y)<.01) ys.push(p.y-20,p.y+20);});
-        const X=[...new Set(xs)].sort((a,b)=>a-b), Y=[...new Set(ys)].sort((a,b)=>a-b);
+        const lane=v=>this.viewMode==='schematic'?this.snap(v):v;
+        const X=[...new Set([a.x,b.x,...xs.map(lane)])].sort((a,b)=>a-b), Y=[...new Set([a.y,b.y,...ys.map(lane)])].sort((a,b)=>a-b);
         const nodes=[], lookup=new Map();
         for(let j=0;j<Y.length;j++) for(let i=0;i<X.length;i++) {
             const p={x:X[i],y:Y[j],i,j};
@@ -3444,7 +3469,8 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
     drawDraftWire() {
         const ctx = this.ctx;
         const start = this.terminalPos(this.draftWire.start.compId, this.draftWire.start.termId);
-        const pts = [start, ...this.draftWire.bends, this.draftPos];
+        const points=[start,...this.draftWire.bends,this.draftPos];
+        const pts=this.viewMode==='schematic'?this.orthogonalDraftPoints(points):points;
         ctx.strokeStyle = '#3498db'; ctx.lineWidth = 3; ctx.setLineDash([6,4]);
         ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
         for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
@@ -3515,8 +3541,8 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
     }
 
     drawBattery(comp) {
-        const ctx = this.ctx;
-        ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-10,0); ctx.moveTo(10,0); ctx.lineTo(32,0); ctx.stroke();
+        const ctx = this.ctx,port=2*(this.gridSize||20)/this.componentSize(comp);
+        ctx.beginPath(); ctx.moveTo(-port,0); ctx.lineTo(-10,0); ctx.moveTo(10,0); ctx.lineTo(port,0); ctx.stroke();
         ctx.lineWidth = 2.4;
         ctx.beginPath(); ctx.moveTo(10,-18); ctx.lineTo(10,18); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(-10,-11); ctx.lineTo(-10,11); ctx.stroke();
@@ -3528,8 +3554,8 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
     }
 
     drawResistor(comp) {
-        const ctx = this.ctx;
-        ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-22,0); ctx.moveTo(22,0); ctx.lineTo(32,0); ctx.stroke();
+        const ctx = this.ctx,port=2*(this.gridSize||20)/this.componentSize(comp);
+        ctx.beginPath(); ctx.moveTo(-port,0); ctx.lineTo(-22,0); ctx.moveTo(22,0); ctx.lineTo(port,0); ctx.stroke();
         ctx.fillStyle = this.symbolFill; ctx.fillRect(-22,-8,44,16);
         ctx.strokeRect(-22,-9,44,18);
         this.label(comp,comp.label||'R',0,41,{font:'bold 13px Arial'});
@@ -3553,8 +3579,8 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
     }
 
     drawBulb(comp) {
-        const ctx = this.ctx;
-        ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-14,0); ctx.moveTo(14,0); ctx.lineTo(32,0); ctx.stroke();
+        const ctx = this.ctx,port=2*(this.gridSize||20)/this.componentSize(comp);
+        ctx.beginPath(); ctx.moveTo(-port,0); ctx.lineTo(-14,0); ctx.moveTo(14,0); ctx.lineTo(port,0); ctx.stroke();
         const visual=this.drawBulbGlow(comp,0,0,12);
         ctx.fillStyle=visual.lit?visual.color:this.symbolFill;
         ctx.beginPath(); ctx.arc(0,0,12,0,7); ctx.fill(); ctx.shadowBlur = 0;
@@ -3570,8 +3596,8 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
     }
 
     drawSwitch(comp) {
-        const ctx = this.ctx;
-        ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-18,0); ctx.moveTo(18,0); ctx.lineTo(32,0); ctx.stroke();
+        const ctx = this.ctx,port=2*(this.gridSize||20)/this.componentSize(comp);
+        ctx.beginPath(); ctx.moveTo(-port,0); ctx.lineTo(-18,0); ctx.moveTo(18,0); ctx.lineTo(port,0); ctx.stroke();
         ctx.fillStyle = this.schematicInk;
         ctx.beginPath(); ctx.arc(-18,0,3.5,0,7); ctx.fill();
         ctx.beginPath(); ctx.arc(18,0,3.5,0,7); ctx.fill();
@@ -3584,18 +3610,18 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
     }
 
     drawPotentiometer(comp) {
-        const ctx=this.ctx,{fixedX,upperX,sliderX:wx}=this.potSymbolGeometry(comp);
+        const ctx=this.ctx,{fixed,fixedX,upperX,lowerY:y,upperY,sliderX:wx}=this.potSymbolGeometry(comp);
         ctx.strokeStyle=this.schematicInk;ctx.lineWidth=2.4;ctx.fillStyle=this.symbolFill;
-        ctx.fillRect(-30,14,60,20);ctx.strokeRect(-30,14,60,20);
-        ctx.beginPath();ctx.moveTo(fixedX,24);ctx.lineTo(Math.sign(fixedX)*30,24);
-        ctx.moveTo(upperX,-28);ctx.lineTo(wx,-28);ctx.lineTo(wx,5);ctx.stroke();
-        ctx.fillStyle=this.schematicInk;ctx.beginPath();ctx.moveTo(wx,13);ctx.lineTo(wx-7,-1);ctx.lineTo(wx,3);ctx.lineTo(wx+7,-1);ctx.closePath();ctx.fill();
+        ctx.fillRect(-30,y-10,60,20);ctx.strokeRect(-30,y-10,60,20);
+        ctx.beginPath();for(const term of ['a','b'])if(term===fixed||this.isTerminalConnected(comp,term)){const x=term==='a'?-Math.abs(fixedX):Math.abs(fixedX);ctx.moveTo(x,y);ctx.lineTo(Math.sign(x)*30,y);}
+        ctx.moveTo(upperX,upperY);ctx.lineTo(wx,upperY);ctx.lineTo(wx,y-19);ctx.stroke();
+        ctx.fillStyle=this.schematicInk;ctx.beginPath();ctx.moveTo(wx,y-11);ctx.lineTo(wx-7,y-25);ctx.lineTo(wx,y-21);ctx.lineTo(wx+7,y-25);ctx.closePath();ctx.fill();
         this.drawPotCurrent(comp,'schematic');
         this.label(comp,comp.label||'滑动变阻器',0,53,{font:'12px Microsoft YaHei'});
     }
 
     drawMeter(comp, letter) {
-        const ctx = this.ctx;
+        const ctx = this.ctx,port=2*(this.gridSize||20)/this.componentSize(comp);
         this.meterActiveTerminal(comp);
         if (comp._polarityWarning && !this.predictionHidden && !this.faultHidden) {
             ctx.save();
@@ -3603,7 +3629,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
             ctx.beginPath(); ctx.arc(0,0,24,0,7); ctx.stroke();
             ctx.setLineDash([]); ctx.restore();
         }
-        ctx.beginPath(); ctx.moveTo(-32,0); ctx.lineTo(-18,0); ctx.moveTo(18,0); ctx.lineTo(32,0); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-port,0); ctx.lineTo(-18,0); ctx.moveTo(18,0); ctx.lineTo(port,0); ctx.stroke();
         ctx.fillStyle = this.symbolFill; ctx.beginPath(); ctx.arc(0,0,18,0,7); ctx.fill();
         ctx.beginPath(); ctx.arc(0,0,18,0,7); ctx.stroke();
         const range = comp.range;

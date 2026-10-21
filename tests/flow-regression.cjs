@@ -26,10 +26,10 @@ console.log(`PASS ${count} circuit cases: all component terminals, reversed wire
 for(const lower of ['a','b'])for(const upper of ['c','d'])for(const polarity of [1,-1]){
  const s=sim();const b=s.createComponent('battery',{voltage:3*polarity}),p=s.createComponent('potentiometer',{position:.37}),r=s.createComponent('resistor',{resistance:10});const link=(a,ta,b,tb)=>s.connectTerminals(a,ta,b,tb,[],'both');link(b,'pos',p,upper);link(p,lower,r,'a');link(r,'b',b,'neg');s.solveCircuit();
  for(const view of ['real','schematic','principle']){
-  const paths=s.potCurrentPaths(p,view);const y=view==='real'?19:view==='principle'?210:24,top=view==='real'?-30:view==='principle'?55:-28;
+  const paths=s.potCurrentPaths(p,view);const y=view==='real'?19:view==='principle'?210:s.potSymbolGeometry(p).lowerY,top=view==='real'?-30:view==='principle'?55:s.potSymbolGeometry(p).upperY;
   const slider=paths.find(p=>p.points.length===2&&p.points.every(q=>q.x===p.points[0].x)&&p.points.some(q=>q.y===top)&&p.points.some(q=>q.y===y));
   const upward=(p._potI1-p._potI2)>0;assert.equal(slider.points[0].y,upward?y:top);
-  const fixedX=view==='real'?(lower==='a'?-76:76):view==='principle'?(lower==='a'?80:520):(lower==='a'?-48:48);
+  const fixedX=view==='real'?(lower==='a'?-76:76):view==='principle'?(lower==='a'?80:520):(lower==='a'?-1:1)*Math.abs(s.potSymbolGeometry(p).fixedX);
   const path=paths.find(p=>p.points.some(q=>q.x===fixedX&&q.y===(view==='real'?24:y)));
   assert.equal(path.points[0].x===fixedX,s.connectedWireTerminalFlow(p,lower)>0);
  }
