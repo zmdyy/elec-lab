@@ -4,7 +4,7 @@
 (() => {
 const STORAGE_KEY='elec-lab-experiment-v1';
 const MAX_FILE_BYTES=2*1024*1024;
-const componentFields=['id','type','x','y','rotation','realX','realY','realRotation','schematicRotation','realFlipX','schematicFlipX','voltage','resistance','ratedCurrent','forwardVoltage','position','state','range','label','labelMode','potUpperSide','potContactMode','fault','bulbModel','experimentRole','controlVoltage'];
+const componentFields=['id','type','x','y','rotation','realX','realY','realRotation','schematicRotation','realFlipX','schematicFlipX','voltage','resistance','ratedCurrent','forwardVoltage','position','state','range','label','labelMode','potUpperSide','potContactMode','fault','bulbModel','experimentRole','controlVoltage','schematicPreset'];
 const clone=x=>JSON.parse(JSON.stringify(x));
 const byId=id=>document.getElementById(id);
 const escape=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -45,6 +45,7 @@ function validateGraph(graph) {
   if(c.position!==undefined)requireValid(finite(c.position,0,1),'滑片位置应在 0 到 1 之间。');
   if(c.state!==undefined)requireValid(['open','closed'].includes(c.state),'开关状态无效。');
   if(c.range!==undefined)requireValid((c.type==='ammeter'?[.6,3]:[3,15]).includes(c.range),'电表量程无效。');
+  if(c.schematicPreset!==undefined)requireValid(typeof c.schematicPreset==='boolean','电路图模板设置无效。');
   if(c.labelMode!==undefined)requireValid(['auto','custom'].includes(c.labelMode),'元件命名方式无效。');
   if(c.label!==undefined)requireValid(typeof c.label==='string'&&c.label.length<=80,'元件名称过长。');
   for(const k of ['realFlipX','schematicFlipX'])if(c[k]!==undefined)requireValid(typeof c[k]==='boolean','元件朝向无效。');
