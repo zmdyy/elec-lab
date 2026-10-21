@@ -52,6 +52,10 @@ box.Worker=class{
  const job=s.startRoutingJob(false);s.components[0].measurement=123;s.components[0].state='closed';
  assert.equal(await job,true);assert.equal(s.components[0].measurement,123);assert.equal(s.components[0].state,'closed');
  console.log('PASS rapid switches retain latest view and worker leaves live readings/state intact');
+ assert.equal(await s.switchCircuitView('real'),true);s.solveCircuit();
+ s.components.forEach((c,i)=>{if(['ammeter','voltmeter'].includes(c.type))assert.ok(Math.abs((c.measurement||0)-readings[i])<1e-6);});
+ for(const w of s.wires){const p=s.resolveRealWire(w);assert.ok(p.every(q=>Number.isFinite(q.x)&&Number.isFinite(q.y)));const end=s.wireEndPos(w,'end');assert.ok(Math.hypot(p.at(-1).x-end.x,p.at(-1).y-end.y)<1e-7);}
+ console.log('PASS completed three-circuit physical layout retains finite curves, terminal endpoints and meter readings');
  // A cached, manually adjusted view must retain controls and exact bends.
  const m=build();preset(m,0);m.viewMode='schematic';m.layoutCircuit(true,false);
  const w=m.wires[0];w.autoSchematic=false;w.bends=[{x:33,y:77},{x:88,y:99}];w.editControls={schematic:{points:[{x:33,y:77},{x:55,y:88},{x:88,y:99}],sampled:false}};
