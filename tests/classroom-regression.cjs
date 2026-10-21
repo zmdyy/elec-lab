@@ -12,7 +12,7 @@ function build(index=0){const s=Object.create(sandbox.Simulator.prototype);Objec
 const meterValues=s=>s.components.filter(c=>['ammeter','voltmeter'].includes(c.type)).map(c=>c.measurement);
 const assertReadings=(s,values)=>meterValues(s).forEach((v,i)=>assert.ok(Math.abs(v-values[i])<1e-6,JSON.stringify({after:meterValues(s),before:values})));
 for(let i=0;i<sandbox.experiments.length;i++){
- const s=build(i),p=s.components.find(c=>c.type==='potentiometer');if(p){p.position=.37;p.potContactMode='pinned';p.potUpperSide=-1;}
+ const s=build(i),p=s.components.find(c=>c.type==='potentiometer');if(p){p.position=s.components.some(c=>c.experimentRole==='ir-load')?.2:.37;p.potContactMode='pinned';p.potUpperSide=-1;}
  s.wires[0].autoSchematic=true;s.wires[1].bends=[{x:100,y:80}];s.wires[1].realBends=[{x:160,y:95}];s.schematicReference={components:copy(s.components),wires:copy(s.wires)};
  s.components.forEach((c,j)=>{c.realX=c.x+j*10;c.realY=c.y-j*20;c.realRotation=c.rotation;});s.recalc();
  const readings=meterValues(s),graph=JSON.stringify(s.wires.map(w=>[w.start,w.end])),positions=JSON.stringify(s.components.map(c=>[c.x,c.y,c.realX,c.realY,c.realRotation]));
@@ -21,7 +21,7 @@ for(let i=0;i<sandbox.experiments.length;i++){
  const restored=build(i);restored.importExperiment(copy(saved));
  assert.equal(JSON.stringify(restored.wires.map(w=>[w.start,w.end])),graph);assert.equal(JSON.stringify(restored.components.map(c=>[c.x,c.y,c.realX,c.realY,c.realRotation])),positions);assertReadings(restored,readings);
  assert.equal(restored.wires[0].autoSchematic,true);assert.deepEqual(copy(restored.wires[1].bends),[{x:100,y:80}]);assert.deepEqual(copy(restored.wires[1].realBends),[{x:160,y:95}]);assert.equal(restored.records.length,1);assert.equal(restored.predictionHidden,true);assert.equal(restored.scale,.8);assert.equal(restored.panX,43);
- if(p){const rp=restored.components.find(c=>c.type==='potentiometer');assert.equal(rp.position,.37);assert.equal(rp.potContactMode,'pinned');assert.equal(rp.potUpperSide,-1);}
+ if(p){const rp=restored.components.find(c=>c.type==='potentiometer');assert.equal(rp.position,s.components.some(c=>c.experimentRole==='ir-load')?.2:.37);assert.equal(rp.potContactMode,'pinned');assert.equal(rp.potUpperSide,-1);}
  const added=restored.createComponent('resistor');assert.equal(new Set(restored.components.map(c=>c.id)).size,restored.components.length);assert.ok(added.id);
  restored.undo();assert.equal(restored.components.length,s.components.length);assert.equal(restored.records.length,1);
  console.log('PASS persisted experiment '+(i+1)+': contacts, both layouts, readings, recording, prediction and unique IDs');

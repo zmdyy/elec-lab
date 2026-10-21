@@ -2057,7 +2057,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
             ...JSON.parse(JSON.stringify(def.defaults))
         };
         // 覆盖外部传入的有效属性
-        ['voltage','resistance','ratedCurrent','forwardVoltage','position','state','range','rotation','label','labelMode']
+        ['voltage','resistance','ratedCurrent','forwardVoltage','position','state','range','rotation','label','labelMode','bulbModel','experimentRole','controlVoltage']
             .forEach(k => { if (props[k] !== undefined) comp[k] = props[k]; });
         comp.labelMode = props.labelMode || (props.label ? 'custom' : 'auto');
         this.components.push(comp);
@@ -2144,6 +2144,14 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
     /* ============================================================
      *  核心：节点电压法求解（支持串/并/混联）
      * ============================================================ */
+    filamentResistance(voltage,comp) {
+        // Qualitative steady-state filament model: cold resistance is 1/10
+        // of rated resistance; at rated U=Ir*Rr it is exactly Rr.
+        // The sublinear exponent gives a monotone I-U curve, without inventing
+        // a measured temperature or a thermal transient.
+        const hot=Math.max(comp.resistance,.01),rated=Math.max(comp.ratedCurrent||.3,.001)*hot;
+        return hot*(.1+.9*Math.pow(Math.abs(voltage)/rated,.6));
+    }
     solveCircuit() {
         this.shortCircuit = false;
         this.clearFlow();
@@ -2156,7 +2164,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
         // 复位读数
         this.components.forEach(c => {
             if (c.type === 'voltmeter' || c.type === 'ammeter') c.measurement = 0;
-            if (c.type === 'bulb') { c.current = 0; c.isLit = false; }
+            if (c.type === 'bulb') { c.current = 0; c.isLit = false;c._voltage=0;c._effectiveResistance=c.bulbModel==='filament'?this.filamentResistance(0,c):c.resistance; }
             c._polarityWarning = false;
             c._current = 0;
             c._vmCurrent = 0;
@@ -2204,7 +2212,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
                 if (c.fault === 'open' || c.fault === 'short') return;
                 const k1 = c.type === 'bulb' ? c.id+'_shell' : c.id+'_a';
                 const k2 = c.type === 'bulb' ? c.id+'_tip' : c.id+'_b';
-                resistors.push({k1,k2,R:Math.max(c.resistance,1e-6),comp:c,kind:c.type==='led'?'led':'series',drop:0});
+                resistors.push({k1,k2,R:Math.max(c.resistance,1e-6),comp:c,kind:c.type==='led'?'led':c.type==='bulb'&&c.bulbModel==='filament'?'filament':'series',drop:0});
             } else if (c.type === 'voltmeter') {
                 resistors.push({k1:this.meterPositiveKey(c), k2:c.id+'_neg', R:R_VM, comp:c, kind:'vm'});
             } else if (c.type === 'potentiometer') {
@@ -2235,15 +2243,16 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
         // —— 4. 装配 MNA 矩阵 ——
         const m = sources.length;
         const N = n + m;
-        const leds=resistors.filter(r=>r.kind==='led');
-        let x=new Array(N).fill(0),converged=!leds.length;
+        const leds=resistors.filter(r=>r.kind==='led'),filaments=resistors.filter(r=>r.kind==='filament'),nonlinear=leds.length+filaments.length;
+        let x=new Array(N).fill(0),converged=!nonlinear;
         const value=(solution,key)=>{const i=nodeIdx(key);return i<0?0:(solution[i]||0);};
         // Piecewise-linear LED: I=max(0,(Va-Vk-Vf)/Rd). Rebuild the MNA
-        // stamps until the active set and solution agree; all other loads stay linear.
-        for(let iteration=0;iteration<(leds.length?100:1);iteration++){
+        // stamps until LED states and filament resistances agree with the solution.
+        for(let iteration=0;iteration<(nonlinear?120:1);iteration++){
             const A=Array.from({length:N},()=>new Array(N).fill(0)),b=new Array(N).fill(0);
             for(let i=0;i<n;i++)A[i][i]+=1e-9;
             for(const rb of resistors){
+                if(rb.kind==='filament')rb.R=this.filamentResistance(value(x,rb.k1)-value(x,rb.k2),rb.comp);
                 const on=rb.kind==='led'&&value(x,rb.k1)-value(x,rb.k2)>rb.comp.forwardVoltage;
                 const g=rb.kind==='led'?(on?1/rb.R:1e-12):1/rb.R;
                 rb.drop=on?rb.comp.forwardVoltage:0;rb.conductance=g;
@@ -2254,11 +2263,11 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
             sources.forEach((s,si)=>{const vi=n+si,p=nodeIdx(s.kp),q=nodeIdx(s.kn);
                 if(p>=0){A[p][vi]+=1;A[vi][p]+=1;}if(q>=0){A[q][vi]-=1;A[vi][q]-=1;}b[vi]+=s.E;});
             const next=solveLinear(A,b);
-            const stable=leds.every(rb=>((value(next,rb.k1)-value(next,rb.k2))>rb.comp.forwardVoltage)===(rb.drop>0));
+            const stable=leds.every(rb=>((value(next,rb.k1)-value(next,rb.k2))>rb.comp.forwardVoltage)===(rb.drop>0))&&filaments.every(rb=>{const r=this.filamentResistance(value(next,rb.k1)-value(next,rb.k2),rb.comp);return Math.abs(r-rb.R)<=1e-9*Math.max(1,r);});
             if(stable){x=next;converged=true;break;}
             x=next.map((v,i)=>iteration===0?v:(v+x[i])*.5);
         }
-        if(!converged){this.clearFlow();this.reportState('open');document.getElementById('circuit-state').innerHTML='<p class="badge-warn">二极管电路未收敛，请检查接线与参数。</p>';this.draw();return;}
+        if(!converged){this.clearFlow();this.reportState('open');document.getElementById('circuit-state').innerHTML='<p class="badge-warn">非线性负载电路未收敛，请检查接线与参数。</p>';this.draw();return;}
         const V=key=>value(x,key);
         const branchCurrent=rb=>rb.kind==='led'?Math.max(0,(V(rb.k1)-V(rb.k2)-rb.comp.forwardVoltage)/rb.R):(V(rb.k1)-V(rb.k2))/rb.R;
 
@@ -2276,7 +2285,9 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
                 rb.comp._current = I;
             }
             if(rb.comp.type==='led'){rb.comp.current=I;rb.comp._voltage=V(rb.k1)-V(rb.k2);}
+            if(rb.kind==='series'||rb.kind==='filament')rb.comp._voltage=V(rb.k1)-V(rb.k2);
             if (rb.comp.type === 'bulb') {
+                rb.comp._effectiveResistance=rb.R;
                 rb.comp.current = Math.abs(I);
                 rb.comp.isLit = Math.abs(I) > 1e-4;
             }
@@ -3527,7 +3538,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
 
     bulbAppearance(comp) {
         const current=this.simulationRunning&&!this.predictionHidden?Math.abs(comp.current||0):0;
-        const rated=Math.max(comp.ratedCurrent||.3,.001),power=current*current*Math.max(comp.resistance||0,0),ratio=(current/rated)**2;
+        const rated=Math.max(comp.ratedCurrent||.3,.001),power=current*current*Math.max(comp._effectiveResistance??comp.resistance??0,0),ratio=power/Math.max(rated*rated*Math.max(comp.resistance||0,0),1e-12);
         const level=1-Math.exp(-1.9*Math.pow(ratio,.8));
         const tint=t=>this.lightColor?this.lightColor(t):`rgb(${Math.round(70+185*t)},${Math.round(20+225*t)},${Math.round(10+180*t)})`;
         return {power,ratio,level,lit:level>.001,over:ratio>1.1025,color:this.bulbGlassColor?this.bulbGlassColor(level):tint(level),filament:tint(Math.pow(level,.65))};
@@ -3798,7 +3809,8 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
             case 'bell':
             case 'led':
             case 'bulb':
-                html = num(c.type==='led'?'导通动态电阻 (Ω)':'等效电阻 (Ω)', c.resistance, 'p-res', 1, .01) + num('额定电流 (A)', c.ratedCurrent, 'p-rated', c.type==='led'?.001:.01, .001);
+                html = num(c.type==='led'?'导通动态电阻 (Ω)':c.type==='bulb'&&c.bulbModel==='filament'?'额定电阻 (Ω)':'等效电阻 (Ω)', c.resistance, 'p-res', 1, .01) + num('额定电流 (A)', c.ratedCurrent, 'p-rated', c.type==='led'?.001:.01, .001);
+                if(c.type==='bulb')html='<div class="property-control"><label>灯泡模型</label><select id="p-bulb-model"><option value="fixed"'+(c.bulbModel!=='filament'?' selected':'')+'>固定电阻</option><option value="filament"'+(c.bulbModel==='filament'?' selected':'')+'>灯丝电阻随温度变化</option></select></div>'+html;
                 if(c.type==='led')html+=num('正向压降 (V)',c.forwardVoltage,'p-forward',.1,.1)+'<p>长脚 A 为阳极，短脚 K 为阴极；请串联限流电阻。</p>';
                 if(c.type==='motor')html+='<p>直流电机简化负载，转速为示意；反接反转。</p>';
                 if(c.type==='bell')html+='<p>采用平均负载近似；电铃符号下方两根引脚分别接线。</p>';
@@ -3829,7 +3841,8 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
         this.refreshSelectedReadings();
         const bind = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
         bind('p-voltage','change', e => { this.saveUndo(); c.voltage = Math.min(1e8,Math.max(0,Number(e.target.value)||0));e.target.value=c.voltage; this.recalc(); });
-        bind('p-res','change', e => { this.saveUndo(); c.resistance = Math.min(1e8,Math.max(c.type==='led'?.01:0,Number(e.target.value)||0));e.target.value=c.resistance; this.recalc(); });
+        bind('p-res','change', e => { this.saveUndo(); c.resistance = Math.min(1e8,Math.max(c.type==='led'||(c.type==='bulb'&&c.bulbModel==='filament')?.01:0,Number(e.target.value)||0));e.target.value=c.resistance; this.recalc(); });
+        bind('p-bulb-model','change',e=>{this.saveUndo();c.bulbModel=e.target.value;if(c.bulbModel==='filament')c.resistance=Math.max(.01,c.resistance);this.recalc();this.updatePropertiesPanel();});
         bind('p-forward','change',e=>{this.saveUndo();c.forwardVoltage=Math.min(10,Math.max(.1,Number(e.target.value)||1.8));this.recalc();});
         bind('p-rated','change', e => { this.saveUndo(); c.ratedCurrent = Math.min(c.type==='led'?1:1e8,Math.max(.001,parseFloat(e.target.value)||COMPONENT_DEFS[c.type].defaults.ratedCurrent||.3)); this.recalc(); });
         bind('p-state','change', e => { this.saveUndo(); c.state = e.target.value; this.recalc(); });
@@ -3843,6 +3856,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
             if(reading)reading.value=this.predictionHidden?'待揭示':Number(c.measurement||0).toFixed(c.type==='ammeter'?3:2)+(c.type==='ammeter'?' A':' V');
             if(range)range.value=(c.range||0)+(c.type==='ammeter'?' A':' V');
         }
+        if(c.type==='bulb'){const el=document.getElementById('p-load-status');if(el)el.textContent=this.predictionHidden?'运行结果待揭示':!this.simulationRunning?'仿真已暂停':`${Math.abs(c._voltage||0).toFixed(2)} V · ${(c.current||0).toFixed(3)} A · ${(c._effectiveResistance??c.resistance).toFixed(2)} Ω · ${this.bulbAppearance(c).power.toFixed(3)} W`;}
         if(['led','motor','bell'].includes(c.type)){
             const el=document.getElementById('p-load-status');if(!el)return;
             const over=Math.abs(c._current||0)>(c.ratedCurrent||1);
@@ -4247,6 +4261,43 @@ const EXPERIMENTS = [
             sim.connectTerminals(p,'a',l,'tip');sim.connectTerminals(l,'shell',b,'neg');
             sim.connectTerminals(v,'r3',l,'tip');sim.connectTerminals(v,'neg',l,'shell');sim.selectedComponent=s;
         }
+    },
+    {
+        title:'⑪ 探究电流与电压的关系',group:'规律探究',subtitle:'保持电阻不变，改变电阻两端电压',
+        goal:'保持定值电阻不变，探究通过它的电流与它两端电压的关系。',
+        steps:[
+            '待测电阻为10 Ω；电源、开关、电流表、变阻器与电阻串联，电压表并联在电阻两端。',
+            '闭合前，滑片置最大阻值；闭合后调节滑片，改变电阻两端电压。',
+            '保持待测电阻不变，至少记录3组电压和电流，用 I-U 图像比较。',
+            '比较 I/U，思考：电阻一定时，电流与电压有什么关系？'
+        ],
+        build(sim){EXPERIMENTS[2].build(sim);sim.components.find(c=>c.type==='battery').voltage=3;
+            const r=sim.components.find(c=>c.type==='resistor');r.experimentRole='iu-load';}
+    },
+    {
+        title:'⑫ 探究电流与电阻的关系',group:'规律探究',subtitle:'保持电阻两端电压为2 V，更换电阻',
+        goal:'控制待测电阻两端电压不变，探究通过它的电流与电阻的关系。',
+        steps:[
+            '电源为6 V，变阻器最大电阻为50 Ω，待测电阻先选5 Ω。',
+            '闭合前，滑片置最大阻值；闭合后调节滑片，使待测电阻两端电压为2 V。',
+            '记录后断开开关，在电阻属性中依次改为10、15、20 Ω，滑片先回最大阻值。',
+            '每次重新闭合后都要调节变阻器，使电压表恢复2 V，再记录；未恢复控制电压时会提示。',
+            '比较各次 I×R，观察 I-R 图像；不能把电源电压不变当作电阻两端电压不变。'
+        ],
+        build(sim){EXPERIMENTS[2].build(sim);const r=sim.components.find(c=>c.type==='resistor');
+            Object.assign(r,{resistance:5,experimentRole:'ir-load',controlVoltage:2});sim.components.find(c=>c.type==='potentiometer').resistance=50;}
+    },
+    {
+        title:'⑬ 探究小灯泡灯丝电阻的变化',group:'测量实验',subtitle:'测量不同电压下的电阻，比较亮度变化',
+        goal:'用伏安法测量不同电压下的灯丝电阻，认识温度对灯丝电阻的影响。',
+        steps:[
+            '使用灯丝模型的小灯泡，额定电压为3 V、额定电流为0.3 A；电压表并联在灯泡两端。',
+            '开关断开、滑片置最大阻值后接线；闭合后逐步减小变阻器接入电阻。',
+            '在不超过额定电压的条件下至少记录3组 U、I，记录表会计算 R=U/I 和 P=UI。',
+            '观察亮度与电阻的变化，比较不同电压下的电阻，不要将它们求平均作为一个固定电阻。',
+            'I-U 图像不再是过原点的直线；本实验使用稳态近似，不演示升温和冷却的时间过程。'
+        ],
+        build(sim){EXPERIMENTS[9].build(sim);Object.assign(sim.components.find(c=>c.type==='bulb'),{bulbModel:'filament',experimentRole:'filament-load'});}
     }
 ];
 
