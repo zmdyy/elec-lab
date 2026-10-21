@@ -779,7 +779,7 @@ class CircuitSimulator {
         const terminal=this.findTerminalAt(x,y);
         if(terminal)return terminal;
         if(this.viewMode!=='schematic')return null;
-        let best=null,distance=8*this.hitScale;
+        let best=null,distance=8*(this.hitScale||1);
         for(const wire of [...this.activeWires()].reverse()){
             const path=this.resolveWire(wire);
             for(let i=1;i<path.length;i++){
