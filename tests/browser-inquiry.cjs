@@ -13,7 +13,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
    await page.click('#exp-menu-btn');await page.click(`[data-experiment="${index}"]`);
    await page.evaluate(()=>{sim.components.find(c=>c.type==='switch').state='closed';sim.recalc();});
    if(index===11){
-    await page.click('#record-btn');await page.click('#take-record');assert.equal(await page.evaluate(()=>sim.records.length),0);assert.match(await page.locator('#classroom-message').innerText(),/2 V/);await page.click('#record-return');
+    await page.click('#record-btn');await page.click('#take-record');assert.equal(await page.evaluate(()=>sim.records.length),0);assert.match(await page.locator('#classroom-dialog-message').innerText(),/2 V/);await page.click('#record-return');
     for(const R of [5,10,15,20]){
      await page.evaluate(R=>{const r=sim.recordLoad();sim.selectedComponent=r;sim.updatePropertiesPanel();},R);
      await page.fill('#p-res',String(R));await page.locator('#p-res').dispatchEvent('change');
