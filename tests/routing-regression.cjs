@@ -61,6 +61,15 @@ box.Worker=class{
  const w=m.wires[0];w.autoSchematic=false;w.bends=[{x:33,y:77},{x:88,y:99}];w.editControls={schematic:{points:[{x:33,y:77},{x:55,y:88},{x:88,y:99}],sampled:false}};
  const manual=plain([w.bends,w.editControls]);assert.equal(await m.startRoutingJob(true),true);assert.deepEqual(plain([w.bends,w.editControls]),manual);
  console.log('PASS existing layout keeps manual bend and control coordinates');
+ // Pending display placeholders must never be frozen as saved edit geometry.
+ const pending=build();preset(pending,0);pending.viewMode='real';
+ pending.autoRealWirePath=(_w,start)=>[start,start];
+ pending.freezeAutoWirePaths();assert.ok(pending.wires.every(w=>!w.realBends?.length));
+ pending.selectedComponent=pending.components[0];pending.beginDragPreview(pending.selectedComponent);
+ assert.equal(pending._dragBaseline.size,0);pending.selectedComponent.realX=pending.selectedComponent.x+35;
+ pending.finishDragPreview();assert.ok(pending.wires.every(w=>!w.realBends?.length));
+ assert.deepEqual(plain(pending.wireControlPoints(pending.wires[0],true)),[]);assert.ok(!pending.wires[0].editControls);
+ console.log('PASS editing during background calculation never saves a placeholder as a real route');
  assert.equal(blobs.size,0);assert.equal(started,terminated);
  console.log('PASS workers, timers and Blob URLs cleaned up after success and cancellation');
 })().catch(error=>{console.error(error);process.exitCode=1;});

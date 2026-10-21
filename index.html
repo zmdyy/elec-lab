@@ -915,12 +915,17 @@ class CircuitSimulator {
         return out;
     }
 
+    wirePathReady(w,path) {
+        if(!path?.length)return false;
+        return [['start',path[0]],['end',path.at(-1)]].every(([end,p])=>{const q=this.wireEndPos(w,end);return Math.hypot(p.x-q.x,p.y-q.y)<1e-7;});
+    }
     wireControlPoints(w, create = false) {
         const mode=this.viewMode;
-        if(create){w.editControls ||= {};w.editControls[mode] ||= {points:[],manual:false,sampled:false};}
-        const state=w.editControls?.[mode];
+        let state=w.editControls?.[mode];
         if(state?.points?.length===3&&(state.manual||state.sampled))return state.points;
         const path=mode==='real'?this.sampleRealWirePath(this.resolveRealWire(w)):this.resolveWire(w);
+        if(!this.wirePathReady(w,path))return [];
+        if(create){w.editControls ||= {};state=w.editControls[mode] ||= {points:[],manual:false,sampled:false};}
         const points=this.wireQuarterPoints(path);
         if(state)state.points=points;
         return points;
@@ -935,7 +940,7 @@ class CircuitSimulator {
         }));
         for(const {w,path} of paths){
             const needs=mode==='real'?!w.realBends?.length:!!w.autoSchematic;
-            if(!needs)continue;
+            if(!needs||!this.wirePathReady(w,path))continue;
             const sampled=this.resampleEditablePath(path);if(sampled.length!==49)continue;
             w.editControls ||= {};
             w.editControls[mode] ||= {points:[sampled[12],sampled[24],sampled[36]].map(p=>({...p})),manual:false,sampled:true};
@@ -947,7 +952,7 @@ class CircuitSimulator {
 
     moveWireControlPoint(w,index,x,y) {
         if(index<0||index>2)return;
-        this.wireControlPoints(w,true);
+        if(this.wireControlPoints(w,true).length!==3)return;
         const mode=this.viewMode;
         let state=w.editControls[mode];
         if(!state.manual){
@@ -1034,7 +1039,7 @@ class CircuitSimulator {
                 manual:!!w.editControls?.[mode]?.manual,
                 start:this.wireEndPos(w,'start'),end:this.wireEndPos(w,'end')};
         });
-        for(const item of snapshot)this._dragBaseline.set(item.w,item);
+        for(const item of snapshot)if(this.wirePathReady(item.w,item.path))this._dragBaseline.set(item.w,item);
     }
 
     dragPreviewPath(w) {
@@ -3027,6 +3032,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
         if(this._routingMini&&this._miniRouter)return this._miniRouter.autoRealWirePath(w,start,end);
         // Rebuild once per geometry change, in stable wire order. Animation reuses the routes.
         const key=this.routingGeometryKey();
+        if(this._routeKey!==key&&(this.dragging||this.draggingControlPoint)&&!this._routingWorkerContext&&!this._routingSync)return [start,start];
         if(this._routeKey!==key&&this.canRouteInWorker()){
             this.startRoutingJob();return [start,start];
         }
