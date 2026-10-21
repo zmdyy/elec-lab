@@ -47,6 +47,7 @@ node tests/flow-regression.cjs
 node tests/devices-regression.cjs
 node tests/interface-regression.cjs
 node tests/wire-editor-regression.cjs
+node tests/curve-regression.cjs
 ```
 
 若已安装 Playwright 与 Chromium，可额外运行 `node tests/browser-wire-editor.cjs` 测试三控制点的真实鼠标拖动与保存恢复。每帧绘制请求合并处理，不以停止电流动画代替优化。
@@ -71,3 +72,11 @@ node tests/wire-editor-regression.cjs
 安装 Playwright 及 Chromium 后，可运行 `node tests/browser-interface.cjs` 检查菜单、实际鼠标和触屏输入、命名、恢复弹窗、文件传输及屏幕适配。可用 `PLAYWRIGHT_MODULE`、`CHROMIUM_PATH`、`CHROMIUM_LIBS` 指定已有运行环境；`SCREENSHOT_DIR` 用于保存检查截图。
 
 完整检查与本次回归修复见 [代码检查记录](docs/code-review-2026-10-21.md)。
+
+### 曲线出线与采样
+
+新增实物导线先尝试朝目标的自然曲线，再尝试安全的斜向或侧向引出；固定向上、向下的出线仅作为避障回退，避免接线柱附近先伸出再急回头。自动线路的存储点使用单调三次插值平滑，防止新的端点过冲。
+
+曲线完成平滑后，再沿最终弧长等距生成显示采样点，通常约2个画布单位一个点；超长线路设有采样数量上限，但同一根线内仍等弧长分布。显示采样、49点编辑骨架和3个手动控制点相互独立，控制点不会被显示采样移动。重复绘制复用采样缓存。
+
+旧实验文件保存的线路仍保留；需要让旧自动线路采用新的自然走线时，点击一次“整理实物线路”。手动控制点和保存恢复规则继续保留。

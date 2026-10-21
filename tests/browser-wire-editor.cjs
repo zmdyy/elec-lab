@@ -115,6 +115,23 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   });
   assert.ok(uniform.count>25&&uniform.middle,'actual Canvas paints the formerly blank overlap');
   console.log('PASS Chromium: physical lead overlap retains uniformly distributed current arrows');
+  const curveFixtures=await page.evaluate(()=>{
+   const s=sim;const results=[];
+   for(const meter of [false,true]){
+    s.clearAll();s.viewMode='real';
+    const b=s.createComponent('battery',{x:meter?100:140,y:meter?80:120,voltage:meter?3:9.5});
+    const target=s.createComponent(meter?'ammeter':'switch',{x:meter?320:440,y:meter?240:220});
+    for(const c of s.components){c.realX=c.x;c.realY=c.y;}
+    s.connectTerminals(b,'pos',target,meter?'neg':'a',[],'both');const w=s.wires[0];
+    const routed=s.routeNewWireLocally(w),p=s.sampleRealWirePath(s.resolveRealWire(w));
+    s.recalc();s.fitView(20);s.draw();
+    results.push({routed,uniform:p._arcSampled===true,clear:s.wireRoutesReport(new Map([[w,p]])).clear,
+     noHook:meter?Math.max(...p.map(q=>q.y))<=p.at(-1).y+1:p.every(q=>q.y>=p[0].y-.001)});
+   }
+   return results;
+  });
+  for(const fixture of curveFixtures)assert.deepEqual(fixture,{routed:true,uniform:true,clear:true,noHook:true});
+  console.log('PASS Chromium: photo-regression supply and meter leads render without return hooks, with final arc sampling');
   assert.deepEqual(errors,[]);
   console.log('PASS Chromium: drag exactly three handles, JSON roundtrip, component drag and zero repeated solve/routing');
  }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

@@ -104,11 +104,12 @@ console.log('PASS wire editor: 3 handles, per-view JSON, legacy import, invalid 
  shape.viewMode='real';shape.wireEndPos=(_w,end)=>end==='start'?source[0]:source[48];
  const actual=shape.resolveRealWire(testWire);
  assert.equal(actual._sampled,true);
- assert.equal(actual.length,145);
+ assert.equal(actual._arcSampled,true);
+ assert.ok(actual.length>100);
  for(let n=0;n<3;n++){
-  const i=(n+1)*36;
-  assert.ok(Math.hypot(actual[i].x-handles[n].x,actual[i].y-handles[n].y)<1e-8,
-     'smoothing must not move a user control point');
+  const h=handles[n];
+  const distance=Math.min(...actual.slice(1).map((p,i)=>shape.distToSeg(h.x,h.y,actual[i],p)));
+  assert.ok(distance<.1,'rendered curve must pass through each unchanged editing handle within subpixel tolerance');
  }
  const kink=(points,i)=>{
   const a=points[i-1],b=points[i],c=points[i+1];
@@ -116,7 +117,9 @@ console.log('PASS wire editor: 3 handles, per-view JSON, legacy import, invalid 
   return Math.acos(Math.max(-1,Math.min(1,(v[0]*w[0]+v[1]*w[1])/(Math.hypot(...v)*Math.hypot(...w)))));
  };
  for(const i of [12,24,36]){
-  assert.ok(kink(actual,i*3)<kink(source,i)*.3,'control-point kink should become a gentle curve');
+  const h=source[i];let nearest=1;
+  for(let j=2;j<actual.length-1;j++)if(Math.hypot(actual[j].x-h.x,actual[j].y-h.y)<Math.hypot(actual[nearest].x-h.x,actual[nearest].y-h.y))nearest=j;
+  assert.ok(kink(actual,nearest)<kink(source,i)*.3,'control-point kink should become a gentle curve');
  }
  // The editable control path and export/display path must match after cache hit.
  assert.equal(shape.resolveRealWire(testWire),actual);
@@ -131,7 +134,7 @@ for(const mode of ['real','schematic']){
  s.beginDragPreview(r);s.dragging=true;
  if(mode==='real')r.realX+=80;else r.x+=80;
  const preview=s.dragPreviewPath(w);
- for(const h of w.editControls[mode].points)assert.ok(preview.some(p=>Math.hypot(p.x-h.x,p.y-h.y)<1e-7));
+ for(const h of w.editControls[mode].points)assert.ok(Math.min(...preview.slice(1).map((p,i)=>s.distToSeg(h.x,h.y,preview[i],p)))<.1);
  s.finishDragPreview();s.dragging=false;
  assert.equal(JSON.stringify(w.editControls[mode]),saved,'drag must not move manual handles');
  assert.equal(JSON.stringify(mode==='real'?w.realBends:w.bends),bends,'drag must not resample a manual route');
@@ -148,6 +151,7 @@ for(const mode of ['real','schematic']){
  assert.equal(w.editControls?.[mode],undefined);
  assert.equal(JSON.stringify(w.editControls?.[other]),keep);
  const actual=mode==='real'?s.resolveRealWire(w):s.resolveWire(w);
- assert.deepEqual(JSON.parse(JSON.stringify(s.wireControlPoints(w))),JSON.parse(JSON.stringify(s.wireQuarterPoints(actual))));
+ const quarter=s.wireQuarterPoints(actual);
+ s.wireControlPoints(w).forEach((p,i)=>assert.ok(Math.hypot(p.x-quarter[i].x,p.y-quarter[i].y)<.001));
 }
 console.log('PASS rearrangement clears obsolete handles only in the rearranged view');
