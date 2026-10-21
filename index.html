@@ -875,6 +875,30 @@ class CircuitSimulator {
         return [.25,.5,.75].map(at);
     }
 
+    // Rendering samples are separate from the 49-point editing scaffold.
+    // Interpolate by cumulative arc length after ALL smoothing, never by t.
+    uniformRealWireSamples(path, spacing = 2) {
+        if(path._arcSampled)return path;
+        this._arcSampleCache ||= new WeakMap();
+        const cached=this._arcSampleCache.get(path);
+        if(cached&&cached.spacing===spacing)return cached.points;
+        const lengths=[0];
+        for(let i=1;i<path.length;i++)lengths.push(lengths[i-1]+Math.hypot(path[i].x-path[i-1].x,path[i].y-path[i-1].y));
+        const total=lengths.at(-1)||0,count=Math.max(1,Math.min(8192,Math.ceil(total/spacing)));
+        const out=[];let i=1;
+        for(let n=0;n<=count;n++){
+            const d=total*n/count;
+            while(i<path.length-1&&lengths[i]<d)i++;
+            const a=path[i-1]||path[0],b=path[i]||a;
+            if(!a)break;
+            const t=(d-(lengths[i-1]||0))/Math.max(1e-12,(lengths[i]||0)-(lengths[i-1]||0));
+            out.push({x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t});
+        }
+        if(out.length){out[0]={...path[0]};out[out.length-1]={...path.at(-1)};}
+        out._sampled=true;out._arcSampled=true;
+        this._arcSampleCache.set(path,{spacing,points:out});return out;
+    }
+
     resampleEditablePath(path) {
         // 48 equally-spaced segments ensure handle indices 12/24/36
         // and retain a smoothly rendered shape without hundreds of handles.
@@ -977,14 +1001,15 @@ class CircuitSimulator {
             w.editControls.real={points:[sampled[12],sampled[24],sampled[36]].map(p=>({...p})),manual:false,sampled:true};
             w._routeBlocked=false;return true;
         };
-        // Cheap curved exit-lead candidate before invoking a combinatorial search.
         const first=this.wireEndPos(w,'start'),last=this.wireEndPos(w,'end');
+        const direct=this.smoothIndependentRoutes(new Map([[w,[first,last]]])).get(w);
+        if(accept(this.sampleRealWirePath(direct)))return true;
+        // Natural routing tries safe diagonal/lateral exits before a fixed normal.
+        const natural=this.naturalWireRoutes([w]);
+        if(natural&&accept(this.sampleRealWirePath(this.smoothIndependentRoutes(natural).get(w))))return true;
         const exitA=this.terminalOutPoint(w.start.compId,w.start.termId,first);
         const exitB=this.terminalOutPoint(w.end.compId,w.end.termId,last);
         if(accept(this.sampleRealWirePath([first,exitA,exitB,last])))return true;
-        // Natural diagonal routing next; only the new lead is optimized.
-        const natural=this.naturalWireRoutes([w]);
-        if(natural&&accept(this.smoothIndependentRoutes(natural).get(w)))return true;
         // Fall back to single-wire obstacle avoidance around the frozen leads.
         const occupied=[];
         for(const [other,path] of paths){const points=this.simplifyRoutePoints(path);for(let i=1;i<points.length;i++)occupied.push([points[i-1],points[i],other]);}
@@ -2492,7 +2517,33 @@ class CircuitSimulator {
         }
         output.push({...path[48]});
         output._sampled=true;
-        return output;
+        return this.uniformRealWireSamples(output);
+    }
+
+    // Monotone coordinate tangents round the stored automatic scaffold without
+    // inventing a new loop or overshooting a terminal. Manual handles use the
+    // separate edit interpolator above and remain unchanged.
+    smoothStoredRealWirePath(path) {
+        if(path.length<3)return this.uniformRealWireSamples(path);
+        const tangent=path.map((p,i)=>{
+            const before=path[Math.max(0,i-1)],after=path[Math.min(path.length-1,i+1)],v={};
+            for(const axis of ['x','y']){
+                const a=p[axis]-before[axis],b=after[axis]-p[axis];
+                v[axis]=i===0?b:i===path.length-1?a:a*b<=0?0:2*a*b/(a+b);
+            }
+            return v;
+        });
+        const out=[];
+        for(let i=0;i<path.length-1;i++){
+            const a=path[i],b=path[i+1],u=tangent[i],v=tangent[i+1];
+            const steps=Math.max(8,Math.min(64,Math.ceil(Math.hypot(b.x-a.x,b.y-a.y)/1.5)));
+            for(let j=0;j<steps;j++){
+                const t=j/steps,t2=t*t,t3=t2*t;
+                out.push({x:(2*t3-3*t2+1)*a.x+(t3-2*t2+t)*u.x+(-2*t3+3*t2)*b.x+(t3-t2)*v.x,
+                    y:(2*t3-3*t2+1)*a.y+(t3-2*t2+t)*u.y+(-2*t3+3*t2)*b.y+(t3-t2)*v.y});
+            }
+        }
+        out.push({...path.at(-1)});return this.uniformRealWireSamples(out);
     }
 
     resolveRealWire(w) {
@@ -2500,18 +2551,15 @@ class CircuitSimulator {
         const start = this.wireEndPos(w, 'start');
         const end = this.wireEndPos(w, 'end');
         if (w.realBends && w.realBends.length) {
-            if(w.editControls?.real?.sampled){
-                const state=w.editControls.real,revision=w._realEditRevision||0,cache=w._realSmoothCache;
-                if(cache&&cache.bends===w.realBends&&cache.revision===revision&&
-                   cache.sx===start.x&&cache.sy===start.y&&cache.ex===end.x&&cache.ey===end.y)
-                    return cache.path;
-                const source=[start,...w.realBends,end],path=state.manual?
-                    this.smoothEditedRealWirePath(source):source;
-                path._sampled=true;
-                w._realSmoothCache={bends:w.realBends,revision,sx:start.x,sy:start.y,ex:end.x,ey:end.y,path};
-                return path;
-            }
-            return [start,...w.realBends,end];
+            const state=w.editControls?.real,revision=w._realEditRevision||0,cache=w._realSmoothCache;
+            if(cache&&cache.bends===w.realBends&&cache.revision===revision&&
+               cache.sx===start.x&&cache.sy===start.y&&cache.ex===end.x&&cache.ey===end.y)
+                return cache.path;
+            const source=[start,...w.realBends,end];
+            const path=state?.sampled?(state.manual?this.smoothEditedRealWirePath(source):this.smoothStoredRealWirePath(source)):source;
+            if(state?.sampled)path._sampled=true;
+            w._realSmoothCache={bends:w.realBends,revision,sx:start.x,sy:start.y,ex:end.x,ey:end.y,path};
+            return path;
         }
         const auto = this.autoRealWirePath(w, start, end);
         if (auto) return auto;
@@ -2606,7 +2654,8 @@ class CircuitSimulator {
         const body=[],conflicts=[],self=[],entries=[...routes],segments=new Map();
         const distance=(a,b,c,d)=>this.segmentsIntersect(a,b,c,d)?0:Math.min(this.distToSeg(a.x,a.y,c,d),this.distToSeg(b.x,b.y,c,d),this.distToSeg(c.x,c.y,a,b),this.distToSeg(d.x,d.y,a,b));
         for(const [w,path] of entries){
-            const parts=path.slice(1).flatMap((q,i)=>Math.hypot(q.x-path[i].x,q.y-path[i].y)>.001?[[path[i],q]]:[]);segments.set(w,parts);
+            const checkPath=path._arcSampled?this.simplifyRoutePoints(path,.1):path;
+            const parts=checkPath.slice(1).flatMap((q,i)=>Math.hypot(q.x-checkPath[i].x,q.y-checkPath[i].y)>.001?[[checkPath[i],q]]:[]);segments.set(w,parts);
             if(only&&w!==only)continue;
             if(!path.every(p=>Number.isFinite(p.x)&&Number.isFinite(p.y))){body.push(w);continue;}
             for(const c of this.components){
@@ -3005,7 +3054,10 @@ class CircuitSimulator {
     }
 
     sampleRealWirePath(pts, stepsPerCurve = 12) {
-        if(pts._sampled||pts.length<3)return pts;
+        if(pts._sampled||pts.length<3)return this.uniformRealWireSamples(pts);
+        this._realPolylineCache ||= new WeakMap();
+        const cache=this._realPolylineCache.get(pts);
+        if(cache&&cache.steps===stepsPerCurve&&cache.routes===this._routes)return cache.points;
         const out=[pts[0]];
         for(let i=1;i<pts.length-1;i++) {
             const a=pts[i-1],b=pts[i],c=pts[i+1];
@@ -3019,7 +3071,8 @@ class CircuitSimulator {
             const v={x:b.x+(c.x-b.x)*r/l2,y:b.y+(c.y-b.y)*r/l2};out.push(u);
             for(let j=1;j<=stepsPerCurve;j++){const t=j/stepsPerCurve,k=1-t;out.push({x:k*k*u.x+2*k*t*b.x+t*t*v.x,y:k*k*u.y+2*k*t*b.y+t*t*v.y});}
         }
-        out.push(pts.at(-1));return out;
+        out.push(pts.at(-1));const sampled=this.uniformRealWireSamples(out);
+        this._realPolylineCache.set(pts,{steps:stepsPerCurve,routes:this._routes,points:sampled});return sampled;
     }
 
     qualifyWeakWireFlows(electricalWires) {
