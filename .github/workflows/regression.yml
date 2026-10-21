@@ -17,6 +17,7 @@ jobs:
           - routing-regression.cjs
           - inquiry-regression.cjs
           - grid-regression.cjs
+          - preset-junction-regression.cjs
           - circuit-regression.cjs
           - classroom-regression.cjs
           - flow-regression.cjs
@@ -49,3 +50,4 @@ jobs:
           node tests/browser-routing.cjs
           node tests/browser-inquiry.cjs
           node tests/browser-grid.cjs
+          PRESET_VISUAL_QA=1 node tests/browser-preset-junction.cjs

@@ -5,7 +5,7 @@ const box={document:{getElementById:()=>dummy,querySelectorAll:()=>[]},window:{a
 vm.createContext(box);vm.runInContext(fs.readFileSync(path.join(__dirname,'../index.html'),'utf8').match(/<script>([\s\S]*?)<\/script>/)[1]+';this.S=CircuitSimulator;this.defs=COMPONENT_DEFS;this.experiments=EXPERIMENTS;',box);vm.runInContext(fs.readFileSync(path.join(__dirname,'../devices.js'),'utf8'),box);
 function build(mode='schematic'){const s=Object.create(box.S.prototype);Object.assign(s,{components:[],wires:[],idCounter:0,gridSize:20,viewMode:mode,simulationRunning:false,scale:1,panX:0,panY:0});for(const name of ['saveUndo','recalc','draw','updateCircuitInfo','updatePropertiesPanel'])s[name]=()=>{};return s;}
 const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-7,`${a} != ${b}`),grid=p=>{near(p.x/20,Math.round(p.x/20));near(p.y/20,Math.round(p.y/20));};
-const types=Object.keys(box.defs);
+const types=Object.keys(box.defs).filter(k=>!box.defs[k].internal);
 for(const type of types)for(const rotation of [0,90,180,270])for(const flip of [false,true]){
  const s=build(),c=s.createComponent(type,{x:213,y:227,rotation});c.schematicFlipX=flip;
  for(let k=0;k<4;k++){s.getAbsoluteTerminals(c).forEach(grid);s.selectedComponent=c;s.rotateSelected();}

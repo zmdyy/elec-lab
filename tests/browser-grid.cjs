@@ -6,7 +6,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),http=require('n
  try{
   const page=await browser.newPage({viewport:{width:1440,height:900}}),errors=[];page.on('pageerror',e=>errors.push(String(e)));
   await page.goto('http://127.0.0.1:'+server.address().port);await page.click('[data-mode="mouse"]');
-  const types=await page.evaluate(()=>Object.keys(COMPONENT_DEFS));
+  const types=await page.evaluate(()=>Object.keys(COMPONENT_DEFS).filter(k=>!COMPONENT_DEFS[k].internal));
   for(const type of types){
    await page.evaluate(type=>{const s=sim;s.clearAll();s.viewMode='schematic';s.createComponent(type,{x:303,y:297});s.panX=80;s.panY=40;s.scale=1;s.setTool('select');s.draw();},type);
    for(let turn=0;turn<4;turn++){
