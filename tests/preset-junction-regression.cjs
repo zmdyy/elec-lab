@@ -10,7 +10,7 @@ const geometry=s=>JSON.stringify([s.components.map(c=>[c.id,c.x,c.y,c.rotation,c
 for(const i of [1,2,4,10,11]){
  const s=build();box.exps[i].build(s);s.wires.forEach(w=>w.view='both');const g=geometry(s);
  s.layoutSchematicCircuit(true);assert.equal(geometry(s),g);s.solveCircuit();const before=s.components.map(c=>c.measurement||0);
- s.viewMode='real';s.layoutRealCircuit(true);s.viewMode='schematic';s.layoutSchematicCircuit(true);assert.equal(geometry(s),g,'physical placement must not alter prescribed schematic');s.solveCircuit();s.components.forEach((c,k)=>near(c.measurement||0,before[k]));
+ s.viewMode='real';s.layoutRealCircuit(true);assert.ok(s.components.every(c=>s.componentAngle(c)===0),'schematic-only rotations must not turn physical instruments');s.viewMode='schematic';s.layoutSchematicCircuit(true);assert.equal(geometry(s),g,'physical placement must not alter prescribed schematic');s.solveCircuit();s.components.forEach((c,k)=>near(c.measurement||0,before[k]));
  for(const w of s.wires){const p=s.resolveWire(w);for(let k=1;k<p.length;k++)assert.ok(p[k].x===p[k-1].x||p[k].y===p[k-1].y);}
  const saved=s.experimentData(),r=build();r.importExperiment(plain(saved));r.layoutSchematicCircuit(true);assert.equal(geometry(r),g);
  if(i===1){const a=s.components.filter(c=>c.type==='ammeter');near(a[0].measurement,.6);near(a[1].measurement,.3);near(a[2].measurement,.3);assert.equal(a[0]._polarityWarning,false);assert.ok(a[0].measurement<a[0].range);}

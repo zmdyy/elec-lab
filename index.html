@@ -4047,7 +4047,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
         const of=type=>this.components.filter(c=>c.type===type),[battery]=of('battery'),[sw]=of('switch');
         const sourceWire=this.wires.find(w=>[w.start,w.end].some(e=>e.compId===battery.id&&e.termId==='pos')&&[w.start,w.end].some(e=>e.compId===sw.id&&e.termId==='b'));
         if(sourceWire)for(const w of this.wires)for(const e of [w.start,w.end])if(e.compId===sw.id)e.termId=e.termId==='a'?'b':'a';
-        const put=(c,x,y,angle=0)=>Object.assign(c,{x,y,rotation:angle,schematicRotation:angle,schematicFlipX:false,schematicPreset:true});
+        const put=(c,x,y,angle=0)=>Object.assign(c,{x,y,schematicRotation:angle,schematicFlipX:false,schematicPreset:true});
         const bend=(w,points)=>{w.bends=points.map(([x,y])=>({x,y}));w.autoSchematic=false;};
         const joins=(w,c,t)=>[w.start,w.end].some(e=>e.compId===c.id&&(!t||e.termId===t));
         const route=(a,ta,b,tb,points)=>{const w=this.wires.find(w=>joins(w,a,ta)&&joins(w,b,tb));if(!w)throw new Error('实验模板连接不完整');bend(w,w.start.compId===a.id?points:[...points].reverse());};

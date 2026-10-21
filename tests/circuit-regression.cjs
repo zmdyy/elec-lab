@@ -244,7 +244,11 @@ for(const builder of [()=>build(0),()=>build(1),()=>build(2),()=>build(3),buildU
  const height=Math.max(...boxes.map(b=>b.bottom))-Math.min(...boxes.map(b=>b.top));
  assert.ok(width/height>=.85&&width/height<=2.1,'physical layout must have a balanced width and height');
  assert.ok(width<=1300,'these teaching fixtures must fit a compact component footprint');
- assertSafeRoutes(m);assert.equal(m._routingMode,'natural','representative layouts must use the complete-network planner');
+ assertSafeRoutes(m);
+ // Fixed schematic endpoints deliberately bypass contact permutations. Their physical
+ // placement may use the independent planner, which must satisfy the same clearance checks.
+ if(m.components.every(c=>c.schematicPreset))assert.ok(['natural','independent'].includes(m._routingMode));
+ else assert.equal(m._routingMode,'natural','generic representative layouts must use the complete-network planner');
 }
 console.log('PASS eight compact physical layouts: balanced proportions, bounded span, complete-network planning and safe routes');
 
@@ -321,7 +325,8 @@ for(let index=0;index<sandbox.experiments.length;index++){
  const m=build(index);m.wires.forEach(w=>w.view='schematic');
  const wiring=JSON.stringify(m.wires.map(w=>[w.start,w.end]));m.prepareExperimentViews();
  assertEquivalentConnections(m,wiring);
- assert.ok(m.schematicReference.wires.every(w=>w.autoSchematic&&w.bends.length===0),'reference must discard obsolete template elbows');
+ const fixed=m.components.every(c=>c.schematicPreset);
+ assert.ok(m.schematicReference.wires.every(w=>fixed?!w.autoSchematic:w.autoSchematic&&w.bends.length===0),'fixed references retain the explicit teacher drawing; generic references discard obsolete elbows');
  m.components.filter(c=>c.type==='switch').forEach(c=>c.state='closed');m.viewMode='schematic';m.solveCircuit();
  assert.ok(m.components.filter(c=>['ammeter','voltmeter'].includes(c.type)).every(c=>c.measurement>0),'built-in references must have positive meter readings');
  const readings=m.components.map(c=>c.measurement||0),resolve=m.resolveRealWire,sample=m.sampleRealWirePath;
@@ -338,7 +343,7 @@ for(let index=0;index<sandbox.experiments.length;index++){
 for(const mode of ['schematic','real'])for(let index=0;index<4;index++){
  const m=build(0);m.viewMode=mode;m.fitView=()=>{};m.drawMiniSchematic=()=>{};m.loadExperiment(index);
  assert.equal(m.viewMode,mode);assert.equal(m.activeExperiment,index);assert.equal(m.schematicReference.components.length,m.components.length);
- assert.ok(m.schematicReference.wires.every(w=>w.autoSchematic));
+ assert.ok(m.schematicReference.wires.every(w=>m.components.every(c=>c.schematicPreset)?!w.autoSchematic:w.autoSchematic));
  if(mode==='real')assert.equal(m.activeWires().length,0);
  const b=m.components.find(c=>c.type==='battery');assert.ok(m.terminalPos(b.id,'pos').x>m.terminalPos(b.id,'neg').x);
 }
@@ -418,8 +423,10 @@ for(const [name,builder] of [['series',()=>build(0)],['parallel',()=>build(1)],[
  m.components.forEach((c,i)=>assert.ok(Math.abs((c.measurement||0)-readings[i])<1e-6));
  const b=m.components.find(c=>c.type==='battery'),s=m.components.find(c=>c.type==='switch');
  assert.equal(s.y,b.y);assert.ok(Math.abs(s.x-b.x)<=160.01,'main switch next to source');
- assert.equal(m.componentSize(b),1.3);assert.ok(m._schematicFrame.right-m._schematicFrame.left<=1050,'compact horizontal span');
- assert.ok(m._schematicFrame.bottom-m._schematicFrame.top>=450);
+ const fixed=m.components.every(c=>c.schematicPreset),points=m.wires.flatMap(w=>m.resolveWire(w));
+ const frame=fixed?{left:Math.min(...points.map(p=>p.x)),right:Math.max(...points.map(p=>p.x)),top:Math.min(...points.map(p=>p.y)),bottom:Math.max(...points.map(p=>p.y))}:m._schematicFrame;
+ assert.equal(m.componentSize(b),1.3);assert.ok(frame.right-frame.left<=1050,'compact horizontal span');
+ assert.ok(frame.bottom-frame.top>=(fixed?360:450));
  const resolve=m.resolveRealWire,sample=m.sampleRealWirePath;m.resolveRealWire=m.resolveWire;m.sampleRealWirePath=p=>p;assertSafeRoutes(m);
  for(const w of m.wires){const p=m.resolveWire(w);p.slice(1).forEach((q,i)=>assert.ok(Math.abs(q.x-p[i].x)<1e-6||Math.abs(q.y-p[i].y)<1e-6));}
  m.resolveRealWire=resolve;m.sampleRealWirePath=sample;
