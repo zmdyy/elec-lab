@@ -33,7 +33,7 @@ const click=(s,p)=>s.handleMouseDown({button:0,clientX:p.x,clientY:p.y,detail:1}
  // Start on a wire, then cancel: no split or orphan node.
  click(s,{x:640,y:280});assert.equal(s.wires.length,3);s.setTool('select');assert.equal(s.components.filter(c=>c.type==='junction').length,0);
  s.currentTool='wire';click(s,{x:640,y:280});click(s,s.terminalPos(s.components.find(c=>c.type==='bulb').id,'tip'));assert.equal(s.wireDrawing,false);near(s.components.find(c=>c.type==='bulb').current,.3);
- const n=s.components.find(c=>c.type==='junction');s.selectedComponent=n;s.selectedWire=null;s.deleteSelected();assert.equal(s.wires.some(w=>[w.start.compId,w.end.compId].includes(n.id)),false);near(s.components.find(c=>c.type==='bulb').current,0);
+ const n=s.components.find(c=>c.type==='junction');s.selectedComponent=n;s.saveUndo();s.beginDragPreview(n);n.x+=40;n.y+=40;s.finishDragPreview();for(const w of s.wires){const p=s.resolveWire(w);for(let k=1;k<p.length;k++){assert.ok(p[k].x===p[k-1].x||p[k].y===p[k-1].y);assert.equal(p[k].x%20,0);assert.equal(p[k].y%20,0);}}s.recalc();near(s.components.find(c=>c.type==='bulb').current,.3);s.undo();s.selectedComponent=s.components.find(c=>c.type==='junction');s.selectedWire=null;s.deleteSelected();assert.equal(s.wires.some(w=>[w.start.compId,w.end.compId].includes(n.id)),false);near(s.components.find(c=>c.type==='bulb').current,0);
  console.log('PASS T connection: true parallel current, preserved host path, save/import, atomic undo, cancel, start-on-wire and node deletion');
 }
 {

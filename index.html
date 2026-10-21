@@ -756,10 +756,13 @@ class CircuitSimulator {
         return t ? {x: t.x, y: t.y} : null;
     }
 
+    junctionVisible(c) {return this.activeWires().some(w=>w.start.compId===c.id||w.end.compId===c.id);}
+
     findTerminalAt(x, y) {
         let best = null, bestD = this.snapRadius * this.hitScale;
         const seen = new Set();
         for (const comp of this.components) {
+            if(comp.type==='junction'&&!this.junctionVisible(comp))continue;
             for (const t of this.getAbsoluteTerminals(comp)) {
                 if(t.hidden)continue;
                 const sk = comp.id + '_' + Math.round(t.x) + '_' + Math.round(t.y);
@@ -815,6 +818,7 @@ class CircuitSimulator {
     findComponentAt(x, y) {
         for (let i = this.components.length - 1; i >= 0; i--) {
             const c = this.components[i];
+            if(c.type==='junction'&&!this.junctionVisible(c))continue;
             const p = this.componentPos(c);
             const r = COMPONENT_DEFS[c.type].selRadius * this.hitScale*this.componentSize(c);
             if(this.viewMode==='real' ? this.pointInBox({x,y},this.realComponentBox(c,0)) : Math.hypot(p.x-x,p.y-y)<r)return c;
@@ -1097,6 +1101,7 @@ class CircuitSimulator {
         if(!sx&&!sy&&!ex&&!ey)return base.path;
         // A manual route keeps its three saved handles and intermediate bends.
         // Only its terminal endpoints follow the component being moved.
+        if(this.viewMode==='schematic'&&this.selectedComponent?.type==='junction')return this.orthogonalDraftPoints([start,...base.path.slice(1,-1),end]);
         if(base.manual){
             const source=[start,...(base.bends||[]),end];
             if(this.viewMode==='real'){const path=this.smoothEditedRealWirePath(source);path._sampled=true;return path;}
@@ -1117,6 +1122,7 @@ class CircuitSimulator {
             const affected=w.start.compId===this.selectedComponent.id||w.end.compId===this.selectedComponent.id;
             const preview=this.dragPreviewPath(w);
             paths.set(w,preview);
+            if(mode==='schematic'&&this.selectedComponent?.type==='junction'&&affected){w.bends=preview.slice(1,-1).map(p=>({...p}));w.autoSchematic=false;continue;}
             if(base.manual)continue;
             // Freeze automatic routes without changing an unrelated explicit path.
             if(!affected&&(mode==='real'?!!w.realBends?.length:!w.autoSchematic))continue;
@@ -3527,7 +3533,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
 
     drawComponent(comp) {
         const ctx = this.ctx;
-        if(comp.type==='junction'){const p=this.componentPos(comp);ctx.save();ctx.fillStyle=this.schematicInk;ctx.beginPath();ctx.arc(p.x,p.y,3.5,0,Math.PI*2);ctx.fill();ctx.restore();return;}
+        if(comp.type==='junction'){if(!this.junctionVisible(comp))return;const p=this.componentPos(comp);ctx.save();ctx.fillStyle=this.schematicInk;ctx.beginPath();ctx.arc(p.x,p.y,3.5,0,Math.PI*2);ctx.fill();ctx.restore();return;}
         ctx.save();
         const pos = this.componentPos(comp);
         ctx.translate(pos.x, pos.y);
@@ -4039,6 +4045,8 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
 
     applyExperimentSchematic(kind) {
         const of=type=>this.components.filter(c=>c.type===type),[battery]=of('battery'),[sw]=of('switch');
+        const sourceWire=this.wires.find(w=>[w.start,w.end].some(e=>e.compId===battery.id&&e.termId==='pos')&&[w.start,w.end].some(e=>e.compId===sw.id&&e.termId==='b'));
+        if(sourceWire)for(const w of this.wires)for(const e of [w.start,w.end])if(e.compId===sw.id)e.termId=e.termId==='a'?'b':'a';
         const put=(c,x,y,angle=0)=>Object.assign(c,{x,y,rotation:angle,schematicRotation:angle,schematicFlipX:false,schematicPreset:true});
         const bend=(w,points)=>{w.bends=points.map(([x,y])=>({x,y}));w.autoSchematic=false;};
         const joins=(w,c,t)=>[w.start,w.end].some(e=>e.compId===c.id&&(!t||e.termId===t));
@@ -4046,18 +4054,18 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
         this.components.forEach(c=>c.schematicPreset=true);
         if(kind==='measurement'){
             const [r]=of('resistor'),[pot]=of('potentiometer'),[am]=of('ammeter'),[vm]=of('voltmeter');
-            put(battery,360,120);put(sw,520,120,180);put(am,640,300,270);
+            put(battery,360,120);put(sw,520,120);put(am,640,300,270);
             put(r,360,480);put(pot,520,440);put(vm,360,340);pot.potUpperSide=1;
-            route(battery,'pos',sw,'b',[]);route(sw,'a',am,'r0_6',[[640,120]]);
+            route(battery,'pos',sw,'a',[]);route(sw,'b',am,'r0_6',[[640,120]]);
             route(am,'neg',pot,'c',[[640,400],[580,400]]);route(pot,'a',r,'b',[]);
             route(r,'a',battery,'neg',[[200,480],[200,120]]);
             route(vm,'r3',r,'b',[]);route(vm,'neg',r,'a',[]);
         }else if(kind==='parallel-current'){
             const [a1,a2,a3]=of('ammeter'),[l1,l2]=of('bulb');
-            put(battery,360,120);put(sw,520,120,180);put(a1,640,220,270);
+            put(battery,360,120);put(sw,520,120);put(a1,640,220,270);
             put(l1,340,340);put(a2,460,340);put(l2,340,480);put(a3,460,480);
             a1.range=3;
-            route(battery,'pos',sw,'b',[]);route(sw,'a',a1,'r3',[[640,120]]);
+            route(battery,'pos',sw,'a',[]);route(sw,'b',a1,'r3',[[640,120]]);
             route(a1,'neg',a2,'r0_6',[[640,340]]);route(a1,'neg',a3,'r0_6',[[640,340],[640,480]]);
             // Reverse passive lamp posts so both branches are simple horizontal rows.
             for(const l of [l1,l2])l.schematicFlipX=true;
@@ -4065,9 +4073,9 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
             route(l1,'tip',battery,'neg',[[200,340],[200,120]]);route(l2,'tip',battery,'neg',[[200,480],[200,120]]);
         }else if(kind==='series-voltage'){
             const [l1,l2]=of('bulb'),[v1,v2,v3]=of('voltmeter');
-            put(battery,360,220);put(sw,540,220,180);put(l2,340,380);put(l1,500,380);
+            put(battery,360,220);put(sw,540,220);put(l2,340,380);put(l1,500,380);
             put(v3,440,100);put(v2,340,500);put(v1,500,500);
-            route(battery,'pos',sw,'b',[]);route(sw,'a',l1,'tip',[[620,220],[620,380]]);
+            route(battery,'pos',sw,'a',[]);route(sw,'b',l1,'tip',[[620,220],[620,380]]);
             route(l1,'shell',l2,'tip',[]);route(l2,'shell',battery,'neg',[[240,380],[240,220]]);
             route(v1,'r3',l1,'tip',[]);route(v1,'neg',l1,'shell',[]);
             route(v2,'r3',l2,'tip',[]);route(v2,'neg',l2,'shell',[]);

@@ -25,6 +25,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),http=require('n
   assert.equal(await page.evaluate(()=>sim.switchCircuitView('schematic',true)),true);
   assert.equal(await page.evaluate(()=>sim.switchCircuitView('real')),true);assert.equal(await page.evaluate(()=>sim.switchCircuitView('schematic')),true);
   const saved=await page.evaluate(()=>sim.experimentData());await page.evaluate(d=>sim.importExperiment(d),saved);assert.ok(await page.evaluate(()=>Math.abs(sim.components.find(c=>c.type==='bulb').current-.3)<1e-6));
+  await page.evaluate(()=>sim.setTool('select'));const drag=await page.evaluate(()=>screenPoint({x:640,y:280}));await page.mouse.move(drag.x,drag.y);await page.mouse.down();await page.mouse.move(drag.x+40,drag.y+40,{steps:4});await page.mouse.up();assert.ok(await page.evaluate(()=>sim.wires.every(w=>{const p=sim.resolveWire(w);return p.every((q,i)=>q.x%20===0&&q.y%20===0&&(!i||q.x===p[i-1].x||q.y===p[i-1].y));})));await page.evaluate(()=>{sim.undo();sim.setTool('wire');});
   // Hover and start at the same node, then cancel without changing topology.
   const q=await page.evaluate(()=>screenPoint({x:640,y:280}));await page.mouse.move(q.x,q.y);await page.mouse.click(q.x,q.y);await page.evaluate(()=>sim.setTool('select'));assert.equal(await page.evaluate(()=>sim.wires.length),5);
   assert.deepEqual(errors,[]);console.log('PASS Chromium junction: actual mouse branch connection, hover/draft rendering, worker, persistence, cancellation and no page errors');
