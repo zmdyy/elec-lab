@@ -143,7 +143,7 @@ for(const lower of ['a','b'])for(const upper of ['c','d'])for(const reversed of 
  for(const view of ['real','schematic','principle']){
   const paths=m.potCurrentPaths(pot,view);assert.equal(paths.length,3,'only live coil half, slider and connected rod half animate');
   assert.ok(paths.every(p=>p.current>1e-6));
-  const top=view==='principle'?55:view==='real'?-30:-28;
+  const top=view==='principle'?55:view==='real'?-30:m.potSymbolGeometry(pot).upperY;
   const rod=paths.find(p=>p.points.every(q=>q.y===top));assert.ok(rod);
   const terminalX=view==='principle'?(upper==='c'?80:520):view==='real'?(upper==='c'?-112:112):m.potSymbolGeometry(pot).upperX;
   assert.ok(rod.points.some(p=>p.x===terminalX),'rod must reach actual connected post');
@@ -356,7 +356,7 @@ for(const lower of ['a','b'])for(const upper of ['c','d']){
   p.position=position;m.solveCircuit();
   assert.equal(m.potSymbolGeometry(p).sliderX,-25+50*position);
   for(const view of ['real','schematic','principle']){
-   const paths=m.potCurrentPaths(p,view),y=view==='principle'?210:view==='real'?19:24,top=view==='principle'?55:view==='real'?-30:-28;
+   const paths=m.potCurrentPaths(p,view),y=view==='principle'?210:view==='real'?19:m.potSymbolGeometry(p).lowerY,top=view==='principle'?55:view==='real'?-30:m.potSymbolGeometry(p).upperY;
    const slider=paths.find(path=>path.points.length===2&&path.points.some(q=>q.y===y)&&path.points.some(q=>q.y===top));
    const normalized=(slider.points[0].x-(view==='principle'?150:view==='real'?-64:-25))/(view==='principle'?300:view==='real'?128:50);
    assert.ok(Math.abs(normalized-position)<1e-8,'all three views must show the same left/right slider position');
@@ -367,8 +367,8 @@ for(const lower of ['a','b'])for(const upper of ['c','d']){
   save(){},restore(){},fillRect(){},strokeRect(){},stroke(){},fill(){},closePath(){},arc(...a){arcs.push(a);}};
  m.label=(c,t)=>labels.push(t);m.simulationRunning=false;m.drawPotentiometer(p);
  assert.ok(!labels.some(t=>/^[ABCD]$/.test(t)));
- const unusedX=lower==='a'?48:-48;
- assert.ok(!lines.some(([a,b])=>a.y===24&&b.y===24&&(a.x===unusedX||b.x===unusedX)),'unused resistor end has no lead');
+ const unusedX=(lower==='a'?1:-1)*Math.abs(m.potSymbolGeometry(p).fixedX),lowerY=m.potSymbolGeometry(p).lowerY;
+ assert.ok(!lines.some(([a,b])=>a.y===lowerY&&b.y===lowerY&&(a.x===unusedX||b.x===unusedX)),'unused resistor end has no lead');
  m.components=[p];m.currentTool='select';m.drawAllTerminals();assert.equal(arcs.length,0,'no permanent colored binding-post dots');
  m.currentTool='wire';m.lastMousePos={x:-10000,y:-10000};m.drawAllTerminals();assert.equal(arcs.length,2,'temporary connection targets for two functional ports');
 }
@@ -397,7 +397,7 @@ const rodWire=leadChoice.wires.find(w=>[w.start,w.end].some(e=>e.compId===leadPo
 const far=leadChoice.components.find(c=>c.id===(rodWire.start.compId===leadPot.id?rodWire.end:rodWire.start).compId);
 leadPot.x=400;leadPot.y=400;far.x=50;far.y=340;leadChoice.optimizePotSymbolLeads([rodWire]);assert.equal(leadPot.potUpperSide,-1);
 leadPot.potUpperSide=1;
-assert.equal(leadChoice.potSymbolGeometry(leadPot).upperX,48);
+assert.equal(leadChoice.potSymbolGeometry(leadPot).upperX,60/1.3);
 console.log('PASS slider lead can exit left or right to shorten schematic wiring without changing physical contacts');
 
 function buildMultiVoltage(){

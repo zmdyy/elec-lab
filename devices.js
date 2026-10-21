@@ -5,11 +5,12 @@
 const svg=(body,box='-80 -90 160 190')=>`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box}" width="640" height="760">${body}</svg>`;
 const ink=dark=>dark?'#e2e8f0':'#202932';
 const defs=`<defs><linearGradient id="metal"><stop stop-color="#73869a"/><stop offset=".4" stop-color="#edf4fa"/><stop offset=".65" stop-color="#b9c8d4"/><stop offset="1" stop-color="#65798f"/></linearGradient><radialGradient id="bell"><stop stop-color="#e5eef4"/><stop offset=".52" stop-color="#b2c6d4"/><stop offset=".83" stop-color="#7f98ac"/><stop offset="1" stop-color="#435e74"/></radialGradient><linearGradient id="red"><stop stop-color="#6f1426"/><stop offset=".4" stop-color="#f96585"/><stop offset=".7" stop-color="#cf1e50"/><stop offset="1" stop-color="#81152e"/></linearGradient></defs>`;
-function deviceArtwork(kind,dark=false){
+function deviceArtwork(kind,dark=false,grid=20){
+ const port=2*grid/1.3,post=grid/1.3;
  const edge=dark?'#cad8e5':'#293b4b';
- if(kind==='led-symbol')return svg(`<g fill="none" stroke="${ink(dark)}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M-36 0H36M-18-17L13 0L-18 17ZM14-19V19M14 0H36"/><path d="M-1-27L-13-39M18-24L6-36"/><path d="M-13-39L-5-37L-11-31ZM6-36L14-34L8-28Z" fill="${ink(dark)}"/></g>`);
- if(kind==='motor-symbol')return svg(`<g fill="none" stroke="${ink(dark)}" stroke-width="2.8"><path d="M-36 0H-23M23 0H36"/><circle r="23"/></g><text x="0" y="9" text-anchor="middle" font-family="Georgia,serif" font-size="28" fill="${ink(dark)}">M</text>`);
- if(kind==='bell-symbol')return svg(`<g fill="none" stroke="${ink(dark)}" stroke-width="2.8" stroke-linejoin="round"><path d="M-25 5A25 25 0 0 1 25 5ZM-12 5V32M12 5V32"/></g>`);
+ if(kind==='led-symbol')return svg(`<g fill="none" stroke="${ink(dark)}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M-${port} 0H${port}M-18-17L13 0L-18 17ZM14-19V19M14 0H${port}"/><path d="M-1-27L-13-39M18-24L6-36"/><path d="M-13-39L-5-37L-11-31ZM6-36L14-34L8-28Z" fill="${ink(dark)}"/></g>`);
+ if(kind==='motor-symbol')return svg(`<g fill="none" stroke="${ink(dark)}" stroke-width="2.8"><path d="M-${port} 0H-23M23 0H${port}"/><circle r="23"/></g><text x="0" y="9" text-anchor="middle" font-family="Georgia,serif" font-size="28" fill="${ink(dark)}">M</text>`);
+ if(kind==='bell-symbol')return svg(`<g fill="none" stroke="${ink(dark)}" stroke-width="2.8" stroke-linejoin="round"><path d="M-25 5A25 25 0 0 1 25 5ZM-${post} 5V${port}M${post} 5V${port}"/></g>`);
  if(kind==='led-real')return svg(`${defs}<g stroke="${edge}" stroke-width="1.4"><path d="M-14 58V-3H-6V-25M14 46V-3H7V-23" stroke="${dark?'#d7e4ed':'#7f8f9f'}" stroke-width="5" fill="none"/><path d="M-23-5V-29A23 23 0 0 1 23-29V-5Z" fill="url(#red)" fill-opacity=".8"/><path d="M-18-7L-10-25L6-31L15-18L6-12Z" fill="#b6b8bf" fill-opacity=".8"/><path d="M-25-6H25V2H-25Z" fill="#df4c73"/><path d="M-15-38Q-7-50 7-45" stroke="#fff" stroke-opacity=".7" stroke-width="5" stroke-linecap="round" fill="none"/><circle cx="8" cy="-35" r="4" fill="#ffd7e2" stroke="none"/></g>`);
  if(kind==='motor-real')return svg(`${defs}<g stroke="${edge}" stroke-width="1.7"><path d="M-62 28H62V52H-62Z" fill="#7f98ad"/><path d="M-62 22H62L62 38H-62Z" fill="#c4d7e5"/><path d="M-33 23V-36Q0-66 33-36V23Z" fill="url(#metal)"/><circle cy="-15" r="31" fill="#9cb4c8"/><circle cy="-15" r="23" fill="#5f788e"/><path d="M-20-11H20M-18-24H18" stroke="#abc4d5" stroke-width="3"/></g>`);
  if(kind==='fan-blades')return svg(`<g stroke="${edge}" stroke-width="1.5">${[0,120,240].map(a=>`<path transform="rotate(${a})" d="M-5 0C-34-3-55-24-50-43C-45-60-23-61-19-47C-16-33-10-19 5-6Z" fill="#bfd7ea"/>`).join('')}<circle r="7" fill="#e2edf5"/></g>`);
@@ -25,7 +26,7 @@ Object.assign(CircuitSimulator.prototype,{
  },
  bulbGlassColor(level){const t=Math.max(0,Math.min(1,level)),base=this.darkMode?[98,113,132]:[200,214,223],warm=this.lightColor(t).match(/\d+/g).map(Number);return `rgb(${blend(base,warm,Math.pow(t,.6)).join(',')})`;},
  isBellRinging(c){return this.simulationRunning&&!this.predictionHidden&&Math.abs(c._current||0)>Math.max(.002,(c.ratedCurrent||.1)*.15);},
- drawDeviceSVG(kind){this.drawSVG(kind+'-'+(this.darkMode?'dark':'light'),deviceArtwork(kind,this.darkMode),-80,-90,160,190);},
+ drawDeviceSVG(kind){this.drawSVG(kind+'-'+(this.darkMode?'dark':'light')+'-'+(this.gridSize||20),deviceArtwork(kind,this.darkMode,this.gridSize||20),-80,-90,160,190);},
  drawLed(c){this.drawDeviceSVG('led-symbol');this.drawLoadLabel(c,59);},
  drawMotor(c){this.drawDeviceSVG('motor-symbol');this.drawLoadLabel(c,44);},
  drawBell(c){this.drawDeviceSVG('bell-symbol');this.drawLoadLabel(c,56);},
