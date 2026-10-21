@@ -4,7 +4,7 @@
 (() => {
 const STORAGE_KEY='elec-lab-experiment-v1';
 const MAX_FILE_BYTES=2*1024*1024;
-const componentFields=['id','type','x','y','rotation','realX','realY','realRotation','schematicRotation','realFlipX','schematicFlipX','voltage','resistance','ratedCurrent','forwardVoltage','position','state','range','label','labelMode','potUpperSide','potContactMode','fault'];
+const componentFields=['id','type','x','y','rotation','realX','realY','realRotation','schematicRotation','realFlipX','schematicFlipX','voltage','resistance','ratedCurrent','forwardVoltage','position','state','range','label','labelMode','potUpperSide','potContactMode','fault','bulbModel','experimentRole','controlVoltage'];
 const clone=x=>JSON.parse(JSON.stringify(x));
 const byId=id=>document.getElementById(id);
 const escape=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -39,6 +39,9 @@ function validateGraph(graph) {
   for(const k of ['realX','realY'])if(c[k]!==undefined)requireValid(finite(c[k]),'实物图位置无效。');
   for(const k of ['voltage','resistance','ratedCurrent','forwardVoltage'])if(c[k]!==undefined)requireValid(finite(c[k],0,1e8),'电压、电阻或额定电流无效。');
   if(c.type==='led')requireValid(finite(c.forwardVoltage,.1,10)&&finite(c.resistance,.01,1e8)&&finite(c.ratedCurrent,.001,1),'二极管参数无效。');
+  if(c.bulbModel!==undefined)requireValid(c.type==='bulb'&&['fixed','filament'].includes(c.bulbModel)&&(c.bulbModel!=='filament'||c.resistance>=.01),'灯泡模型无效。');
+  if(c.experimentRole!==undefined)requireValid((c.type==='resistor'&&['iu-load','ir-load'].includes(c.experimentRole))||(c.type==='bulb'&&c.experimentRole==='filament-load'),'探究对象无效。');
+  if(c.controlVoltage!==undefined)requireValid(c.experimentRole==='ir-load'&&finite(c.controlVoltage,.01,15),'控制电压无效。');
   if(c.position!==undefined)requireValid(finite(c.position,0,1),'滑片位置应在 0 到 1 之间。');
   if(c.state!==undefined)requireValid(['open','closed'].includes(c.state),'开关状态无效。');
   if(c.range!==undefined)requireValid((c.type==='ammeter'?[.6,3]:[3,15]).includes(c.range),'电表量程无效。');
@@ -80,7 +83,8 @@ function validateClassroom(raw={}) {
   requireValid(typeof r.time==='string'&&r.time.length<=40&&['closed','open','unknown'].includes(r.state),'实验记录状态无效。');
   requireValid(Array.isArray(r.meters)&&r.meters.length<=150&&r.meters.every(m=>m&&typeof m.id==='string'&&['A','V'].includes(m.unit)&&typeof m.label==='string'&&m.label.length<=100&&finite(m.value,-1e8,1e8)),'电表记录无效。');
   requireValid(Array.isArray(r.sliders)&&r.sliders.length<=150&&r.sliders.every(p=>p&&typeof p.id==='string'&&finite(p.position,0,1)),'滑片记录无效。');
-  return {U:r.U,I:r.I,series:r.series,label:r.label,time:r.time,state:r.state,meters:clone(r.meters),sliders:clone(r.sliders)};
+  if(r.loadResistance!==undefined)requireValid(finite(r.loadResistance,.01,1e8),'记录的接入电阻无效。');
+  return {...(r.loadResistance!==undefined?{loadResistance:r.loadResistance}:{}),U:r.U,I:r.I,series:r.series,label:r.label,time:r.time,state:r.state,meters:clone(r.meters),sliders:clone(r.sliders)};
  });
  for(const k of ['recordU','recordI']){requireValid(raw[k]==null||(typeof raw[k]==='string'&&raw[k].length<40),'测量对象无效。');result[k]=raw[k]??null;}
  for(const k of ['predictionHidden','faultHidden']){requireValid(raw[k]===undefined||typeof raw[k]==='boolean','课堂模式无效。');result[k]=!!raw[k];}
@@ -234,20 +238,31 @@ Object.assign(CircuitSimulator.prototype, {
   requireValid(Number.isFinite(value),'当前测量值无效。');
   if(!source)requireValid(Math.abs(value)<=c.range+1e-6,uid(c)+' 超量程，请改接合适量程后再记录。');return value;
  },
+ recordLoad() {
+  const loads=this.components.filter(c=>['iu-load','ir-load','filament-load'].includes(c.experimentRole));return loads.length===1?loads[0]:null;
+ },
  recordSeries() {
   // Voltage and slider position are variables; topology, loads and selected meters define a series.
-  return JSON.stringify([this.viewMode,this.recordU,this.recordI,this.components.map(c=>[c.id,c.type,c.resistance,c.fault||null]),this.activeWires().map(w=>[w.start,w.end,w.fault||null])]);
+  const load=this.recordLoad();
+  const signature=c=>{const row=[c.id,c.type,c===load&&c.experimentRole==='ir-load'?null:c.resistance,c.fault||null];if(c.bulbModel==='filament'||c.experimentRole)row.push(c.bulbModel||'fixed',c.experimentRole||null,c.controlVoltage??null);return row;};
+  return JSON.stringify([this.viewMode,this.recordU,this.recordI,this.components.map(signature),this.activeWires().map(w=>[w.start,w.end,w.fault||null])]);
  },
  recordSample() {
   requireValid(!this.predictionHidden,'请先揭示结果，再记录测量数据。');requireValid(this.components.some(c=>c.type==='battery'),'请先接入电源。');requireValid((this.records||[]).length<1000,'记录已达到 1000 条，请先导出并清空。');
   this.ensureRecordSelections();this.solveCircuit();requireValid(['closed','open'].includes(this._solutionState),'当前电路没有可记录的有效结果，请先检查接线。');
   const uLabel=this.measurementOptions('V').find(o=>o.value===this.recordU)?.label,iLabel=this.measurementOptions('A').find(o=>o.value===this.recordI)?.label;
   const record={time:new Date().toISOString(),U:this.measurementValue(this.recordU,'V'),I:this.measurementValue(this.recordI,'A'),series:this.recordSeries(),label:`${uLabel} / ${iLabel}`,state:this._solutionState||'unknown',meters:this.components.filter(c=>['ammeter','voltmeter'].includes(c.type)).map(c=>({id:c.id,label:uid(c),unit:c.type==='ammeter'?'A':'V',value:c.measurement||0})),sliders:this.components.filter(c=>c.type==='potentiometer').map(c=>({id:c.id,position:c.position}))};
+  const load=this.recordLoad();
+  if(load?.experimentRole==='ir-load'){
+   const target=load.controlVoltage||2;
+   requireValid(record.state==='closed'&&!this.recordU.startsWith('source:')&&Math.abs(Math.abs(record.U)-target)<=target*.01&&Math.abs(Math.abs(load._voltage||0)-target)<=target*.01,'请先调节变阻器，使待测电阻两端电压恢复 '+target+' V（允许1%偏差），再记录。');
+   record.loadResistance=load.resistance;
+  }
   this.records.push(record);this._currentSeries=record.series;this.scheduleAutosave();return record;
  },
  openRecordsDialog() {
   this.ensureRecordSelections();const options=(unit,key)=>this.measurementOptions(unit).map(o=>`<option value="${escape(o.value)}" ${o.value===this[key]?'selected':''}>${escape(o.label)}</option>`).join('');
-  this.showClassroomDialog('records','实验记录与 U-I 图像',`<p>选定测量对象，调整电源或滑片后记录一次。每次同时保存全部电表读数。</p><div class="classroom-fields"><label>电压 U<select id="record-u">${options('V','recordU')}</select></label><label>电流 I<select id="record-i">${options('A','recordI')}</select></label></div><div class="classroom-actions"><button class="primary" id="take-record">记录当前数据</button><button id="record-remove">删除最后一条</button><button id="record-csv">导出 CSV</button><button id="record-plot-png">导出图像</button><button class="danger" id="record-clear">清空记录</button><button id="record-return">返回电路调节</button></div><p id="record-caption" class="classroom-note"></p><div id="record-table-wrap"><table id="record-table"><thead><tr><th>次数</th><th>测量对象</th><th>U / V</th><th>I / A</th><th>滑片位置</th><th>全部电表读数</th></tr></thead><tbody></tbody></table></div><canvas id="record-plot" width="1000" height="540" aria-label="电压 U 随电流 I 的实验散点图"></canvas><p class="classroom-note">横轴为 I，纵轴为 U；更换测量对象、接线或负载电阻后作为另一组数据，不混在同一图中。断路数据仍可记录，但不用于推断闭合电路的电阻。</p>`);
+  this.showClassroomDialog('records','实验记录与 '+(this.recordLoad()?.experimentRole==='ir-load'?'I-R':this.recordLoad()?'I-U':'U-I')+' 图像',`<p>选定测量对象，调整电源或滑片后记录一次。每次同时保存全部电表读数。</p><div class="classroom-fields"><label>电压 U<select id="record-u">${options('V','recordU')}</select></label><label>电流 I<select id="record-i">${options('A','recordI')}</select></label></div><div class="classroom-actions"><button class="primary" id="take-record">记录当前数据</button><button id="record-remove">删除最后一条</button><button id="record-csv">导出 CSV</button><button id="record-plot-png">导出图像</button><button class="danger" id="record-clear">清空记录</button><button id="record-return">返回电路调节</button></div><p id="record-caption" class="classroom-note"></p><div id="record-table-wrap"><table id="record-table"><thead><tr><th>次数</th><th>测量对象</th><th>U / V</th><th>I / A</th><th>R / Ω</th><th>P / W</th><th>滑片位置</th><th>全部电表读数</th></tr></thead><tbody></tbody></table></div><canvas id="record-plot" width="1000" height="540" aria-label="电压 U 随电流 I 的实验散点图"></canvas><p class="classroom-note">${this.recordLoad()?.experimentRole==='ir-load'?'横轴为 R，纵轴为 I；每次记录前须恢复相同的控制电压。':this.recordLoad()?'横轴为 U，纵轴为 I；保持接线和探究对象不变。':'横轴为 I，纵轴为 U；更换测量对象、接线或负载电阻后作为另一组数据。'}断路数据仍可记录，但不用于推断闭合电路的电阻。</p>`);
   byId('record-u').onchange=e=>{this.recordU=e.target.value;this.renderRecords();this.scheduleAutosave();};byId('record-i').onchange=e=>{this.recordI=e.target.value;this.renderRecords();this.scheduleAutosave();};
   byId('take-record').onclick=()=>{try{this.recordSample();this.renderRecords();}catch(e){this.notify(e.message);}};
   byId('record-remove').onclick=()=>{this.records.pop();this.renderRecords();this.scheduleAutosave();};
@@ -259,7 +274,7 @@ Object.assign(CircuitSimulator.prototype, {
  recordsCSV() {
   const quote=x=>'"'+String(x).replace(/"/g,'""')+'"';
   const text=x=>/^[=+\-@\t\r]/.test(String(x))?'\''+x:x;
-  return [['次数','时间','测量对象','U (V)','I (A)','电路状态','滑片位置','全部电表读数'],...this.records.map((r,i)=>[i+1,r.time,text(r.label),r.U,r.I,r.state,r.sliders.map(p=>p.id+':'+Math.round(p.position*100)+'%').join(';'),text(r.meters.map(m=>m.label+':'+m.value+' '+m.unit).join(';'))])].map(row=>row.map(quote).join(',')).join('\r\n');
+  return [['次数','时间','测量对象','U (V)','I (A)','电路状态','滑片位置','全部电表读数','R (Ω)','P (W)','接入电阻 (Ω)'],...this.records.map((r,i)=>[i+1,r.time,text(r.label),r.U,r.I,r.state,r.sliders.map(p=>p.id+':'+Math.round(p.position*100)+'%').join(';'),text(r.meters.map(m=>m.label+':'+m.value+' '+m.unit).join(';')),Math.abs(r.I)>1e-12?Math.abs(r.U/r.I):'',r.U*r.I,r.loadResistance??''])].map(row=>row.map(quote).join(',')).join('\r\n');
  },
  renderRecords() {
   if(this._dialogKind!=='records')return;
@@ -267,21 +282,23 @@ Object.assign(CircuitSimulator.prototype, {
   byId('record-caption').textContent=this.predictionHidden?'预测中，记录数据需先揭示结果。':`共 ${this.records.length} 条记录；当前测量组 ${matching.length} 条。`;
   byId('take-record').disabled=this.predictionHidden||!this.recordU||!this.recordI;
   byId('record-table-wrap').hidden=!!this.predictionHidden;byId('record-plot').hidden=!!this.predictionHidden;byId('record-csv').disabled=!!this.predictionHidden;byId('record-plot-png').disabled=!!this.predictionHidden;
-  byId('record-table').querySelector('tbody').innerHTML=(this.predictionHidden?[]:this.records).map((r,i)=>`<tr><td>${i+1}</td><td>${escape(r.label)}</td><td>${r.U.toFixed(3)}</td><td>${r.I.toFixed(4)}</td><td>${escape(r.sliders.map(p=>p.id+': '+Math.round(p.position*100)+'%').join('，')||'—')}</td><td>${escape(r.meters.map(m=>`${m.label}: ${m.value.toFixed(3)} ${m.unit}`).join('，'))}</td></tr>`).join('');
+  byId('record-table').querySelector('tbody').innerHTML=(this.predictionHidden?[]:this.records).map((r,i)=>`<tr><td>${i+1}</td><td>${escape(r.label)}</td><td>${r.U.toFixed(3)}</td><td>${r.I.toFixed(4)}</td><td>${Math.abs(r.I)>1e-12?Math.abs(r.U/r.I).toFixed(2):'—'}</td><td>${(r.U*r.I).toFixed(3)}</td><td>${escape(r.sliders.map(p=>p.id+': '+Math.round(p.position*100)+'%').join('，')||'—')}</td><td>${escape(r.meters.map(m=>`${m.label}: ${m.value.toFixed(3)} ${m.unit}`).join('，'))}</td></tr>`).join('');
   this.drawRecordPlot(byId('record-plot'),this.predictionHidden?[]:matching);
  },
  drawRecordPlot(canvas,records) {
   const ctx=canvas.getContext('2d'),dark=!!this.darkMode,ink=dark?'#e2e8f0':'#243247',grid=dark?'#42536a':'#dce5ee';
-  ctx.fillStyle=dark?'#1e293b':'#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.font='20px Microsoft YaHei';ctx.fillStyle=ink;ctx.textAlign='center';ctx.fillText('U-I 实验数据',500,32);
+  ctx.fillStyle=dark?'#1e293b':'#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.font='20px Microsoft YaHei';ctx.fillStyle=ink;ctx.textAlign='center';const load=this.recordLoad(),ir=load?.experimentRole==='ir-load',iu=!!load&&!ir;ctx.fillText(ir?'I-R 实验数据':iu?'I-U 实验数据':'U-I 实验数据',500,32);
   const domain=values=>{let lo=Math.min(0,...values),hi=Math.max(0,...values);if(hi===lo)hi=lo+1;const raw=(hi-lo)/5,p=10**Math.floor(Math.log10(raw)),step=[1,2,5,10].find(n=>n*p>=raw)*p;return {lo:Math.floor(lo/step)*step,hi:Math.ceil(hi/step)*step,step};};
-  const xs=domain(records.map(r=>r.I)),ys=domain(records.map(r=>r.U));
+  const xx=r=>ir?r.loadResistance:(iu?r.U:r.I),yy=r=>(ir||iu)?r.I:r.U;
+  records=records.filter(r=>Number.isFinite(xx(r))&&Number.isFinite(yy(r)));
+  const xs=domain(records.map(xx)),ys=domain(records.map(yy));
   const x=v=>100+(v-xs.lo)/(xs.hi-xs.lo)*820,y=v=>450-(v-ys.lo)/(ys.hi-ys.lo)*370;
   const tick=v=>Math.abs(v)<1e-10?'0':Number(v.toPrecision(4)).toString();
   ctx.lineWidth=1;ctx.strokeStyle=grid;ctx.font='17px Arial';
   for(let v=xs.lo,j=0;v<=xs.hi+xs.step*.1&&j<15;v+=xs.step,j++){ctx.beginPath();ctx.moveTo(x(v),80);ctx.lineTo(x(v),450);ctx.stroke();ctx.textAlign='center';ctx.fillStyle=ink;ctx.fillText(tick(v),x(v),478);}
   for(let v=ys.lo,j=0;v<=ys.hi+ys.step*.1&&j<15;v+=ys.step,j++){ctx.beginPath();ctx.moveTo(100,y(v));ctx.lineTo(920,y(v));ctx.stroke();ctx.textAlign='right';ctx.fillStyle=ink;ctx.fillText(tick(v),88,y(v)+6);}
-  ctx.strokeStyle=ink;ctx.lineWidth=2;ctx.strokeRect(100,80,820,370);ctx.textAlign='center';ctx.font='20px Arial';ctx.fillText('I / A',510,520);ctx.save();ctx.translate(28,265);ctx.rotate(-Math.PI/2);ctx.fillText('U / V',0,0);ctx.restore();
-  records.forEach((r,i)=>{ctx.fillStyle=r.state==='open'?'#e29125':'#268be3';ctx.beginPath();ctx.arc(x(r.I),y(r.U),6,0,Math.PI*2);ctx.fill();ctx.font='14px Arial';ctx.fillText(String(i+1),Math.min(910,x(r.I)+14),Math.max(95,y(r.U)-10));});
+  ctx.strokeStyle=ink;ctx.lineWidth=2;ctx.strokeRect(100,80,820,370);ctx.textAlign='center';ctx.font='20px Arial';ctx.fillText(ir?'R / Ω':iu?'U / V':'I / A',510,520);ctx.save();ctx.translate(28,265);ctx.rotate(-Math.PI/2);ctx.fillText(ir||iu?'I / A':'U / V',0,0);ctx.restore();
+  records.forEach((r,i)=>{ctx.fillStyle=r.state==='open'?'#e29125':'#268be3';ctx.beginPath();ctx.arc(x(xx(r)),y(yy(r)),6,0,Math.PI*2);ctx.fill();ctx.font='14px Arial';ctx.fillText(String(i+1),Math.min(910,x(xx(r))+14),Math.max(95,y(yy(r))-10));});
   if(!records.length){ctx.fillStyle=ink;ctx.font='22px Microsoft YaHei';ctx.fillText('记录数据后，在这里显示散点',510,260);}
  },
  openPredictionDialog() {
