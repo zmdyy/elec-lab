@@ -6,7 +6,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),http=require('n
  try{
   const page=await browser.newPage({viewport:{width:1440,height:900}}),errors=[];page.on('pageerror',e=>errors.push(String(e)));
   await page.goto('http://127.0.0.1:'+server.address().port);await page.click('[data-mode="mouse"]');
-  async function setup(type='resistor',view='schematic'){await page.evaluate(({type,view})=>{sim.clearAll();sim.viewMode=view;const c=sim.createComponent(type,{x:300,y:240,state:'open'});c.realX=300;c.realY=240;sim.setTool('select');sim.fitView(20);}, {type,view});await page.waitForTimeout(400);}
+  async function setup(type='resistor',view='schematic'){await page.waitForTimeout(150);await page.evaluate(({type,view})=>{sim.clearAll();sim.viewMode=view;const c=sim.createComponent(type,{x:300,y:240,state:'open'});c.realX=300;c.realY=240;sim.setTool('select');sim.resizeCanvas();sim.fitView(20);}, {type,view});await page.waitForTimeout(400);}
   async function point(localX=0,localY=0){return page.evaluate(({x,y})=>{const c=sim.components[0],p=sim.componentPos(c),r=sim.canvas.getBoundingClientRect(),k=sim.componentSize(c);return {x:r.left+sim.panX+(p.x+x*k)*sim.scale,y:r.top+sim.panY+(p.y+y*k)*sim.scale};},{x:localX,y:localY});}
   await setup();let pt=await point();await page.mouse.click(pt.x,pt.y);assert.equal(await page.locator('#component-card').count(),0);await page.mouse.dblclick(pt.x,pt.y);assert.equal(await page.locator('#component-card').count(),1);
   await page.click('[data-fault="open"]');assert.equal(await page.evaluate(()=>sim.components[0].fault),'open');assert.equal(await page.locator('#component-card').count(),1);

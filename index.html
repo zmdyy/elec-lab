@@ -812,7 +812,15 @@ class CircuitSimulator {
         const end={compId:node.id,termId:'node'};
         const left={...wire,end:{...end},bends:path.slice(1,segment),realBends:null,autoSchematic:false};
         const right={...wire,start:{...end},bends:path.slice(segment,-1),realBends:null,autoSchematic:false};
-        for(const piece of [left,right]){delete piece.editControls;delete piece._realSmoothCache;delete piece.reverseBackup;}
+        for(const piece of [left,right]){
+            delete piece.editControls;delete piece._realSmoothCache;
+            for(const field of ['reverseBackup','connectionBackup']){
+                const backup=wire[field];delete piece[field];
+                if(!backup||![piece.start.compId,piece.end.compId].includes(backup.owner))continue;
+                const start=piece===left?(backup.start||wire.start):piece.start,end=piece===right?(backup.end||wire.end):piece.end;
+                piece[field]={...JSON.parse(JSON.stringify(backup)),start:{...start},end:{...end},bends:piece.bends.map(p=>({...p})),realBends:null,autoSchematic:false};delete piece[field].editControls;
+            }
+        }
         this.wires.splice(this.wires.indexOf(wire),1,left,right);
         return end;
     }
@@ -1452,6 +1460,7 @@ class CircuitSimulator {
             this._pinch = cur; this.draw();
             return;
         }
+        if(e.touches.length===1&&this._lastTapPoint&&Math.hypot(e.touches[0].clientX-this._lastTapPoint.x,e.touches[0].clientY-this._lastTapPoint.y)>6)this._lastTap=0;
         if (e.touches.length === 1) this.handleMouseMove(this.synthMouse(e.touches[0]));
     }
     handleTouchEnd(e) {

@@ -29,3 +29,10 @@ console.log('PASS both rheostat wrong connections: slider independent full/zero 
  for(const type of ['battery','switch'])assert.equal(s.faultKinds(s.createComponent(type)).length,0);
 }
 console.log('PASS invalid wiring is rejected atomically; paused state persists without starting simulation; switch and power have no faults');
+
+// Splitting a rerouted lead must keep backups on only the segment attached to its owner.
+for(const [type,kind] of [['potentiometer','upper'],['ammeter','reverse']]){
+ const {s,c}=circuit(type);s.components.forEach((o,i)=>{o.x=100+i*200;o.y=200;});s.gridSize=20;s.replaceFault(kind,c.id);const w=s.wires.find(w=>[w.start.compId,w.end.compId].includes(c.id));const start=s.wireEndPos(w,'start'),end=s.wireEndPos(w,'end'),middle={x:start.x,y:500};w.bends=[middle,{x:end.x,y:500}];w.autoSchematic=false;s.findTerminalAt=()=>null;
+ const node=s.commitWireTarget({x:(start.x+end.x)/2,y:500,wire:w});assert.ok(node.compId);const restored=base();restored.importExperiment(copy(s.experimentData()));restored.removeFault();assert.equal(restored.components.filter(o=>o.type==='junction').length,1);assert.equal(restored.wires.filter(w=>[w.start.compId,w.end.compId].includes(node.compId)).length,2);
+}
+console.log('PASS adding a junction during wrong wiring preserves valid backup ownership, JSON and the new node on restoration');

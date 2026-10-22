@@ -26,7 +26,7 @@ P.renderComponentCard=function(){
  el.style.left=Math.max(8,Math.min(w-box.width-8,pos[0]))+'px';el.style.top=Math.max(8,Math.min(h-box.height-8,pos[1]))+'px';
 };
 const update=P.updatePropertiesPanel;P.updatePropertiesPanel=function(...args){const result=update.apply(this,args);if(this._cardComponentId)this.renderComponentCard();return result;};
-for(const name of ['setTool','handleWheel','handleContextMenu','undo','deleteSelected','clearAll','importExperiment','toggleViewMode','switchCircuitView','resizeCanvas','showClassroomDialog','loadExperiment']){const original=P[name];if(original)P[name]=function(...args){this.closeComponentCard();return original.apply(this,args);};}
+for(const name of ['setTool','zoom','fitView','rotateSelected','handleWheel','handleContextMenu','undo','deleteSelected','clearAll','importExperiment','toggleViewMode','switchCircuitView','resizeCanvas','showClassroomDialog','loadExperiment']){const original=P[name];if(original)P[name]=function(...args){this.closeComponentCard();return original.apply(this,args);};}
 window.addEventListener('resize',()=>window.sim?.closeComponentCard());
 document.addEventListener('pointerdown',e=>{if(!e.target.closest('#component-card')&&e.target.tagName!=='CANVAS')window.sim?.closeComponentCard();});
 })();
