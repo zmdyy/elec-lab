@@ -4071,6 +4071,19 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
             for(const l of [l1,l2])l.schematicFlipX=true;
             route(a2,'neg',l1,'shell',[]);route(a3,'neg',l2,'shell',[]);
             route(l1,'tip',battery,'neg',[[200,340],[200,120]]);route(l2,'tip',battery,'neg',[[200,480],[200,120]]);
+        }else if(kind==='parallel-voltage'){
+            const [l1,l2]=of('bulb'),[v1,v2,v3]=of('voltmeter');
+            put(battery,280,100);put(sw,520,100);put(v3,400,180);
+            put(v1,400,280);put(l1,400,360);put(l2,400,480);put(v2,400,600);
+            route(battery,'pos',sw,'a',[]);
+            route(sw,'b',l1,'tip',[[640,100],[640,420],[540,420],[540,360]]);
+            route(sw,'b',l2,'tip',[[640,100],[640,420],[540,420],[540,480]]);
+            route(l1,'shell',battery,'neg',[[280,360],[280,420],[160,420],[160,100]]);
+            route(l2,'shell',battery,'neg',[[280,480],[280,420],[160,420],[160,100]]);
+            route(v1,'r3',l1,'tip',[]);route(v1,'neg',l1,'shell',[]);
+            route(v2,'r3',l2,'tip',[]);route(v2,'neg',l2,'shell',[]);
+            route(v3,'r3',sw,'b',[[640,180],[640,100]]);
+            route(v3,'neg',battery,'neg',[[160,180],[160,100]]);
         }else if(kind==='series-voltage'){
             const [l1,l2]=of('bulb'),[v1,v2,v3]=of('voltmeter');
             put(battery,360,220);put(sw,540,220);put(l2,340,380);put(l1,500,380);
@@ -4289,22 +4302,22 @@ const EXPERIMENTS = [
     {
         title: '⑥ 探究并联电路的电压规律', group: '规律探究',
         subtitle: '支路电压与电源电压相等',
-        goal: '同时测量电源和两个并联灯泡的电压，验证 U=U₁=U₂。',
+        goal: '同时测量并联电路公共两端和两个灯泡的电压，验证 U=U₁=U₂。',
         steps: [
-            'V3 测电源两端，V1、V2 分别并联在 L1、L2 上方。',
+            'V3 接在两条支路的公共两端；V1 在 L1 上方、V2 在 L2 下方，分别与对应灯泡并联。',
             '闭合开关，观察两个支路的电压是否相同。',
             '改变一个灯泡的电阻，比较支路电压与亮度；再改变电源电压。',
             '结论：并联各支路两端电压相等，U=U₁=U₂。'
         ],
         build(sim) {
-            const b=sim.createComponent('battery',{voltage:3}),s=sim.createComponent('switch',{state:'closed'});
+            const b=sim.createComponent('battery',{voltage:3}),s=sim.createComponent('switch',{state:'open'});
             const l1=sim.createComponent('bulb',{resistance:10,label:'L1'}),l2=sim.createComponent('bulb',{resistance:20,label:'L2'});
             const v1=sim.createComponent('voltmeter',{label:'V1'}),v2=sim.createComponent('voltmeter',{label:'V2'}),v=sim.createComponent('voltmeter',{label:'V'});
             sim.connectTerminals(b,'pos',s,'b');sim.connectTerminals(s,'a',l1,'tip');sim.connectTerminals(s,'a',l2,'tip');
             sim.connectTerminals(l1,'shell',b,'neg');sim.connectTerminals(l2,'shell',b,'neg');
             sim.connectTerminals(v1,'r3',l1,'tip');sim.connectTerminals(v1,'neg',l1,'shell');
             sim.connectTerminals(v2,'r3',l2,'tip');sim.connectTerminals(v2,'neg',l2,'shell');
-            sim.connectTerminals(v,'r3',b,'pos');sim.connectTerminals(v,'neg',b,'neg');sim.selectedComponent=null;
+            sim.connectTerminals(v,'r3',s,'a');sim.connectTerminals(v,'neg',b,'neg');sim.applyExperimentSchematic('parallel-voltage');sim.selectedComponent=null;
         }
     },
     {

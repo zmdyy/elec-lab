@@ -474,7 +474,7 @@ for(let index=4;index<10;index++)for(const reverse of [false,true]){
    assert.ok(v.measurement>0);const leads=m.wires.filter(w=>[w.start.compId,w.end.compId].includes(v.id));
    const owners=leads.map(w=>w.start.compId===v.id?w.end.compId:w.start.compId);
    if(owners[0]===owners[1]){const load=m.components.find(c=>c.id===owners[0]);
-    if(index===4&&mode==='schematic')assert.ok(m.componentPos(v).y>m.componentPos(load).y,'teacher series-voltage drawing places local voltmeters below their lamps');
+    if(mode==='schematic'&&(index===4||(index===5&&v.label==='V2')))assert.ok(m.componentPos(v).y>m.componentPos(load).y,'teacher drawing places this voltmeter below its measured lamp');
     else assert.ok(m.componentPos(v).y<m.componentPos(load).y);
     assert.ok(Math.abs(m.componentPos(v).x-m.componentPos(load).x)<1e-6,'voltmeter vertically aligned with its explicit measured object');}
   }
