@@ -77,7 +77,7 @@ window.addEventListener('DOMContentLoaded',()=>{
  const experiment=menuButton('exp-menu-btn','实验 ▾',[],true);
  const arrange=menuButton('arrange-menu-btn','整理 ▾',['arrange-real','arrange-schematic']);
  const file=menuButton('file-menu-btn','文件 ▾',['import-experiment-btn','experiment-file-btn','export-image-btn','clear-all']);
- const teaching=menuButton('teaching-menu-btn','课堂 ▾',['prediction-btn','fault-btn','bell-sound']);
+ const teaching=menuButton('teaching-menu-btn','课堂 ▾',['prediction-btn','bell-sound']);
  const display=menuButton('display-menu-btn','显示 ▾',['theme-toggle','toggle-grid','zoom-in','zoom-out','input-mode-btn']);
  byId('fit-view').textContent='完整显示';byId('properties-toggle').textContent='属性';
  byId('export-image-btn').textContent='导出 PNG';

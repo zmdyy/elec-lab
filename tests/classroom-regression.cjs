@@ -35,9 +35,9 @@ console.log('PASS malformed files rejected atomically; camera fields cannot repl
 const fault=build(0),base=meterValues(fault),lamp=fault.components.find(c=>c.type==='bulb'),ends=JSON.stringify(fault.wires.map(w=>[w.start,w.end]));
 fault.applyFault('open',lamp.id);assert.equal(lamp.isLit,false);assert.ok(meterValues(fault).every(i=>Math.abs(i)<1e-6));fault.removeFault();assertReadings(fault,base);
 fault.applyFault('short',lamp.id);assert.equal(lamp.isLit,false);assert.ok(meterValues(fault)[0]>base[0]*1.9);assert.ok(Math.abs(lamp._current)>base[0]*1.9);fault.removeFault();assertReadings(fault,base);
-fault.applyFault('wire-open','0');assert.equal(fault.wires[0]._flowMag,0);assert.ok(meterValues(fault).every(i=>Math.abs(i)<1e-6));fault.removeFault();assertReadings(fault,base);
+assert.throws(()=>fault.applyFault('wire-open','0'));assertReadings(fault,base);
 const am=fault.components.find(c=>c.type==='ammeter'),manualWire=fault.wires.find(w=>[w.start.compId,w.end.compId].includes(am.id));manualWire.bends=[{x:80,y:40}];manualWire.realBends=[{x:100,y:140}];const manual=JSON.stringify([manualWire.bends,manualWire.realBends]);fault.applyFault('reverse',am.id);assert.ok(am.measurement<0);fault.faultHidden=true;
-const savedFault=fault.experimentData(),restoredFault=build(0);restoredFault.importExperiment(savedFault);assert.equal(restoredFault.faultHidden,true);assert.ok(restoredFault.components.find(c=>c.id===am.id).measurement<0);
+const savedFault=fault.experimentData(),restoredFault=build(0);restoredFault.importExperiment(savedFault);assert.equal(restoredFault.faultHidden,false);assert.ok(restoredFault.components.find(c=>c.id===am.id).measurement<0);
 restoredFault.removeFault();const restoredManual=restoredFault.wires.find(w=>[w.start.compId,w.end.compId].includes(am.id));assert.equal(JSON.stringify([restoredManual.bends,restoredManual.realBends]),manual);assert.equal(JSON.stringify(restoredFault.wires.map(w=>[w.start,w.end])),ends);assertReadings(restoredFault,base);
 fault.undo();assert.equal(fault.currentFault(),null);assertReadings(fault,base);
 console.log('PASS open load, zero-resistance short, broken wire and reversed ammeter affect physics and are reversible');
@@ -54,9 +54,9 @@ sandbox.localStorage.setItem=()=>{throw new Error('quota');};auto._recoveryPendi
 console.log('PASS autosave storage, pending-recovery protection and unavailable/quota-exceeded storage');
 
 const selection=build(0);
-assert.equal(selection.faultTargets('open').length,2);
+assert.equal(selection.faultTargets('open').length,5);
 assert.equal(selection.faultTargets('reverse').length,3);
-assert.equal(selection.faultTargets('wire-open').length,selection.wires.length);
+assert.equal(selection.faultTargets('wire-open').length,0);
 selection.wires.forEach(w=>w.view='schematic');selection.viewMode='real';
 assert.equal(selection.faultTargets('wire-open').length,0,'unwired physical views must not offer invisible wires');
 selection.components=[];selection.wires=[];
@@ -67,7 +67,7 @@ replacement.applyFault('open',lamps[0].id);const undoCount=replacement.undoStack
 replacement.replaceFault('short',lamps[1].id);assert.equal(replacement.undoStack.length,undoCount+1);assert.equal(replacement.components.find(c=>c.id===lamps[0].id).fault,undefined);assert.equal(replacement.currentFault().component.id,lamps[1].id);assert.equal(replacement.currentFault().kind,'short');
 replacement.undo();assert.equal(replacement.currentFault().component.id,lamps[0].id);assert.equal(replacement.currentFault().kind,'open');
 const unchanged=replacement.snapshotState();assert.throws(()=>replacement.replaceFault('open','C99999'));assert.equal(replacement.snapshotState(),unchanged);
-replacement.replaceFault('reverse',replacement.components.find(c=>c.type==='ammeter').id);replacement.replaceFault('wire-open','0');assert.equal(JSON.stringify(replacement.wires.map(w=>[w.start,w.end])),normalEnds);assert.equal(replacement.currentFault().wire,replacement.wires[0]);
+replacement.replaceFault('reverse',replacement.components.find(c=>c.type==='ammeter').id);replacement.replaceFault('open',lamps[0].id);assert.equal(JSON.stringify(replacement.wires.map(w=>[w.start,w.end])),normalEnds);assert.equal(replacement.currentFault().component.id,lamps[0].id);
 console.log('PASS changing fault type or location is atomic, undoable and restores reversed meter connections');
 const named=build(8);named.experimentName='并联电路实验';named.components.find(c=>c.type==='potentiometer').potContactMode='mapped';const namedFile=named.experimentData(),namedRestored=build(0);namedRestored.experimentName='原实验';namedRestored.importExperiment(copy(namedFile));assert.equal(namedRestored.experimentName,'并联电路实验');assert.equal(namedRestored.components.find(c=>c.type==='potentiometer').potContactMode,'mapped');namedRestored.undo();assert.equal(namedRestored.experimentName,'原实验');delete namedFile.name;namedRestored.importExperiment(namedFile);assert.equal(namedRestored.experimentName,'');assert.match(named.fileName('json'),/^并联电路实验_\d{12}\.json$/);
 console.log('PASS experiment names, legacy JSON, mapped rheostat contacts, import undo and minute-precision filenames');

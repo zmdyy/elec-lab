@@ -20,6 +20,7 @@ jobs:
           - preset-junction-regression.cjs
           - circuit-regression.cjs
           - classroom-regression.cjs
+          - component-card-regression.cjs
           - flow-regression.cjs
           - devices-regression.cjs
           - interface-regression.cjs
@@ -47,6 +48,7 @@ jobs:
           node tests/browser-wire-editor.cjs
           node tests/browser-performance.cjs
           node tests/browser-interface.cjs
+          CARD_VISUAL_QA=1 node tests/browser-component-card.cjs
           node tests/browser-routing.cjs
           node tests/browser-inquiry.cjs
           node tests/browser-grid.cjs
