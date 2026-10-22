@@ -6,12 +6,12 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),http=require('n
  try{
   const page=await browser.newPage({viewport:{width:1440,height:900}}),errors=[];page.on('pageerror',e=>errors.push(String(e)));await page.goto('http://127.0.0.1:'+server.address().port);await page.click('[data-mode="mouse"]');
   await page.evaluate(()=>{window.schematicGeometry=()=>JSON.stringify([sim.components.map(c=>[c.id,c.x,c.y,c.rotation,c.schematicRotation,c.schematicFlipX,c.potUpperSide]),sim.wires.filter(w=>w.view!=='real').map(w=>[w.start,w.end,w.bends,w.autoSchematic])]);});
-  for(const i of [1,2,4,10,11]){
+  for(const i of [1,2,4,5,10,11]){
    await page.evaluate(i=>{sim.loadExperiment(i);sim.draw();},i);const before=await page.evaluate(()=>schematicGeometry());
    assert.equal(await page.evaluate(()=>sim.switchCircuitView('real')),true);assert.equal(await page.evaluate(()=>sim.switchCircuitView('schematic')),true);assert.equal(await page.evaluate(()=>schematicGeometry()),before);
    assert.equal(await page.evaluate(()=>sim.switchCircuitView('schematic',true)),true);assert.equal(await page.evaluate(()=>schematicGeometry()),before);
    const saved=await page.evaluate(()=>sim.experimentData());await page.evaluate(d=>sim.importExperiment(d),saved);assert.equal(await page.evaluate(()=>schematicGeometry()),before);
-   if(process.env.PRESET_VISUAL_QA&&[1,2,4].includes(i)){await page.evaluate(()=>{sim.draw();});const shot=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=840;c.height=525;c.getContext('2d').drawImage(sim.canvas,0,0,840,525);return c.toDataURL('image/jpeg',.65).split(',')[1];});console.log('PRESET_VISUAL_'+i+':'+shot);}
+   if(process.env.PRESET_VISUAL_QA&&[1,2,4,5].includes(i)){await page.evaluate(()=>{sim.draw();});const shot=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=840;c.height=525;c.getContext('2d').drawImage(sim.canvas,0,0,840,525);return c.toDataURL('image/jpeg',.65).split(',')[1];});console.log('PRESET_VISUAL_'+i+':'+shot);}
    console.log('PASS Chromium preset '+(i+1)+': load, worker view switches, arrange and JSON retain reference drawing');
   }
   await page.evaluate(()=>{
