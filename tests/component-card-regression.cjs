@@ -41,3 +41,8 @@ for(const type of ['ammeter','voltmeter']){
  const {s,c}=circuit(type);const physical=copy(s.wires);s.wires.forEach(w=>w.view='schematic');for(const w of physical){w.view='real';for(const e of [w.start,w.end])if(e.compId===c.id&&e.termId!=='neg')e.termId=type==='ammeter'?'r3':'r15';s.wires.push(w);}const original=JSON.stringify(s.wires.map(w=>[w.start,w.end]));s.replaceFault('reverse',c.id);for(const view of ['real','schematic']){s.viewMode=view;s.recalc();assert.ok(c.measurement<0);}s.removeFault();assert.equal(JSON.stringify(s.wires.map(w=>[w.start,w.end])),original);
 }
 console.log('PASS independent meter ranges in the two views reverse and restore their own positive posts');
+
+for(const [type,kind] of [['potentiometer','upper'],['ammeter','reverse'],['voltmeter','reverse']]){
+ const {s,c}=circuit(type);s.wires.forEach(w=>w.view='schematic');const half=copy(s.wires.find(w=>w.end.compId===c.id));half.view='real';s.wires.push(half);const shape=()=>JSON.stringify([half.start,half.end,half.bends,half.realBends,half.reverseBackup,half.connectionBackup]),prior=shape();s.replaceFault(kind,c.id);assert.equal(shape(),prior,'unfinished inactive view must not block or change');s.removeFault();assert.equal(shape(),prior);
+}
+console.log('PASS valid current-view wiring is usable while the other view is unfinished; unfinished leads remain intact');

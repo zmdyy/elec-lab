@@ -322,7 +322,7 @@ Object.assign(CircuitSimulator.prototype, {
  wiringPlan(c,kind) {
   const views=['schematic','real'],plans=new Map();
   for(const view of views){const wires=this.wires.filter(w=>!w.view||w.view==='both'||w.view===view),ports=[...new Set(wires.flatMap(w=>[w.start,w.end].filter(e=>e.compId===c.id).map(e=>e.termId)))].sort();
-   if(!ports.length&&view!==this.viewMode)continue;
+   if(view!==this.viewMode&&(ports.length!==2||(kind==='reverse'&&!ports.includes('neg'))))continue;
    requireValid(ports.length===2,'请先在当前视图用两个接线柱完成接线。');
    if(kind==='reverse')requireValid(ports.includes('neg')&&ports.filter(p=>p!=='neg').length===1,'请只连接负接线柱和一个量程接线柱。');
    const dest=kind==='upper'?['c','d']:kind==='lower'?['a','b']:[...ports].reverse();plans.set(view,new Map(ports.map((p,i)=>[p,dest[i]])));
@@ -365,8 +365,9 @@ Object.assign(CircuitSimulator.prototype, {
  swapMeterConnections(comp,restore=false,plans=null) {
   const positive=this.meterActiveTerminal(comp).id;
   const swap=w=>{
-   if(!restore)w.reverseBackup={owner:comp.id,start:clone(w.start),end:clone(w.end),bends:clone(w.bends||[]),realBends:w.realBends?clone(w.realBends):null,autoSchematic:!!w.autoSchematic,...(w.editControls?{editControls:clone(w.editControls)}:{})};
    const map=plans?.get(w.view==='real'?'real':w.view==='schematic'?'schematic':this.viewMode);
+   if((restore&&w.reverseBackup?.owner!==comp.id)||(!restore&&plans&&!map))return;
+   if(!restore)w.reverseBackup={owner:comp.id,start:clone(w.start),end:clone(w.end),bends:clone(w.bends||[]),realBends:w.realBends?clone(w.realBends):null,autoSchematic:!!w.autoSchematic,...(w.editControls?{editControls:clone(w.editControls)}:{})};
    if(restore&&w.reverseBackup?.start){w.start=clone(w.reverseBackup.start);w.end=clone(w.reverseBackup.end);}
    else for(const end of [w.start,w.end])if(end.compId===comp.id){if(map)end.termId=map.get(end.termId)||end.termId;else if(end.termId==='neg')end.termId=positive;else if(end.termId===positive)end.termId='neg';}
    if(restore&&w.reverseBackup?.owner===comp.id){
