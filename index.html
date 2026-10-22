@@ -4074,7 +4074,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
         }else if(kind==='parallel-voltage'){
             const [l1,l2]=of('bulb'),[v1,v2,v3]=of('voltmeter');
             put(battery,280,100);put(sw,520,100);put(v3,400,180);
-            put(v1,400,280);put(l1,400,360);put(l2,400,480);put(v2,400,560);
+            put(v1,400,280);put(l1,400,360);put(l2,400,480);put(v2,400,600);
             route(battery,'pos',sw,'a',[]);
             route(sw,'b',l1,'tip',[[640,100],[640,420],[540,420],[540,360]]);
             route(sw,'b',l2,'tip',[[640,100],[640,420],[540,420],[540,480]]);
@@ -4082,7 +4082,7 @@ postMessage({input:s.routingInput(),paths});}catch(error){postMessage({error:Str
             route(l2,'shell',battery,'neg',[[280,480],[280,420],[160,420],[160,100]]);
             route(v1,'r3',l1,'tip',[]);route(v1,'neg',l1,'shell',[]);
             route(v2,'r3',l2,'tip',[]);route(v2,'neg',l2,'shell',[]);
-            route(v3,'r3',l1,'tip',[[640,180],[640,420],[540,420],[540,360]]);
+            route(v3,'r3',sw,'b',[[640,180],[640,100]]);
             route(v3,'neg',battery,'neg',[[160,180],[160,100]]);
         }else if(kind==='series-voltage'){
             const [l1,l2]=of('bulb'),[v1,v2,v3]=of('voltmeter');
@@ -4317,7 +4317,7 @@ const EXPERIMENTS = [
             sim.connectTerminals(l1,'shell',b,'neg');sim.connectTerminals(l2,'shell',b,'neg');
             sim.connectTerminals(v1,'r3',l1,'tip');sim.connectTerminals(v1,'neg',l1,'shell');
             sim.connectTerminals(v2,'r3',l2,'tip');sim.connectTerminals(v2,'neg',l2,'shell');
-            sim.connectTerminals(v,'r3',l1,'tip');sim.connectTerminals(v,'neg',b,'neg');sim.applyExperimentSchematic('parallel-voltage');sim.selectedComponent=null;
+            sim.connectTerminals(v,'r3',s,'a');sim.connectTerminals(v,'neg',b,'neg');sim.applyExperimentSchematic('parallel-voltage');sim.selectedComponent=null;
         }
     },
     {
