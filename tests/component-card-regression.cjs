@@ -36,3 +36,8 @@ for(const [type,kind] of [['potentiometer','upper'],['ammeter','reverse']]){
  const node=s.commitWireTarget({x:(start.x+end.x)/2,y:500,wire:w});assert.ok(node.compId);const restored=base();restored.importExperiment(copy(s.experimentData()));restored.removeFault();assert.equal(restored.components.filter(o=>o.type==='junction').length,1);assert.equal(restored.wires.filter(w=>[w.start.compId,w.end.compId].includes(node.compId)).length,2);
 }
 console.log('PASS adding a junction during wrong wiring preserves valid backup ownership, JSON and the new node on restoration');
+
+for(const type of ['ammeter','voltmeter']){
+ const {s,c}=circuit(type);const physical=copy(s.wires);s.wires.forEach(w=>w.view='schematic');for(const w of physical){w.view='real';for(const e of [w.start,w.end])if(e.compId===c.id&&e.termId!=='neg')e.termId=type==='ammeter'?'r3':'r15';s.wires.push(w);}const original=JSON.stringify(s.wires.map(w=>[w.start,w.end]));s.replaceFault('reverse',c.id);for(const view of ['real','schematic']){s.viewMode=view;s.recalc();assert.ok(c.measurement<0);}s.removeFault();assert.equal(JSON.stringify(s.wires.map(w=>[w.start,w.end])),original);
+}
+console.log('PASS independent meter ranges in the two views reverse and restore their own positive posts');

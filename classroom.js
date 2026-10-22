@@ -98,6 +98,13 @@ function validateExperiment(input) {
  requireValid(input&&input.format==='elec-lab-experiment'&&input.version===1,'请选择本实验室保存的实验 JSON 文件（版本 1）。');
  const graph=validateGraph(input),reference=input.schematicReference?validateGraph(input.schematicReference):null;
  requireValid(graph.components.filter(c=>c.fault).length+graph.wires.filter(w=>w.fault).length<=1,'每个实验最多设置一处故障。');
+ const abnormal=graph.components.find(c=>c.fault);
+ if(reference)reference.components.forEach(c=>{if(c.id===abnormal?.id)c.fault=abnormal.fault;else delete c.fault;});
+ for(const g of [graph,reference].filter(Boolean))for(const w of g.wires){
+  if(w.reverseBackup)requireValid(abnormal?.id===w.reverseBackup.owner&&abnormal.fault==='reverse','反接备份与当前异常不一致。');
+  if(w.connectionBackup)requireValid(abnormal?.id===w.connectionBackup.owner&&['upper','lower'].includes(abnormal.fault),'接线备份与当前异常不一致。');
+ }
+
  const nextId=[...graph.components,...(reference?.components||[])].reduce((n,c)=>Math.max(n,Number(c.id.slice(1))+1),0);
  requireValid(input.idCounter===undefined||(Number.isInteger(input.idCounter)&&input.idCounter>=nextId&&input.idCounter<=1e8),'元件编号计数无效。');
  requireValid(['schematic','real'].includes(input.viewMode),'实验视图无效。');
