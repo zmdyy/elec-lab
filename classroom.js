@@ -11,7 +11,7 @@ const escape=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 const finite=(x,min=-1e5,max=1e5)=>typeof x==='number'&&Number.isFinite(x)&&x>=min&&x<=max;
 const requireValid=(test,message)=>{if(!test)throw new Error(message);};
 const cleanComponent=c=>Object.fromEntries(componentFields.filter(k=>c[k]!==undefined).map(k=>[k,c[k]]));
-const cleanWire=w=>({start:clone(w.start),end:clone(w.end),bends:clone(w.bends||[]),realBends:w.realBends?clone(w.realBends):null,view:w.view||'both',autoSchematic:!!w.autoSchematic,...(w.fault?{fault:w.fault}:{}),...(w.reverseBackup?{reverseBackup:clone(w.reverseBackup)}:{}),...(w.editControls?{editControls:clone(w.editControls)}:{})});
+const cleanWire=w=>({start:clone(w.start),end:clone(w.end),bends:clone(w.bends||[]),realBends:w.realBends?clone(w.realBends):null,view:w.view||'both',autoSchematic:!!w.autoSchematic,...(w.fault?{fault:w.fault}:{}),...(w.reverseBackup?{reverseBackup:clone(w.reverseBackup)}:{}),...(w.connectionBackup?{connectionBackup:clone(w.connectionBackup)}:{}),...(w.editControls?{editControls:clone(w.editControls)}:{})});
 const uid=c=>`${c.label||COMPONENT_DEFS[c.type].name} (${c.id})`;
 const blankClassroom=()=>({records:[],recordU:null,recordI:null,predictionHidden:false,predictionText:'',faultHidden:false});
 function validateEditControls(raw) {
@@ -51,7 +51,7 @@ function validateGraph(graph) {
   for(const k of ['realFlipX','schematicFlipX'])if(c[k]!==undefined)requireValid(typeof c[k]==='boolean','元件朝向无效。');
   if(c.potUpperSide!==undefined)requireValid([-1,1].includes(c.potUpperSide),'变阻器引线位置无效。');
   if(c.potContactMode!==undefined)requireValid(['auto','pinned','mapped'].includes(c.potContactMode),'变阻器接线方式无效。');
-  if(c.fault!==undefined)requireValid((['resistor','bulb'].includes(c.type)&&['open','short'].includes(c.fault))||(c.type==='ammeter'&&c.fault==='reverse'),'元件故障类型无效。');
+  if(c.fault!==undefined)requireValid((['resistor','bulb','potentiometer','ammeter','voltmeter','led','motor','bell'].includes(c.type)&&['open','short'].includes(c.fault))||(['ammeter','voltmeter'].includes(c.type)&&c.fault==='reverse')||(c.type==='potentiometer'&&['upper','lower'].includes(c.fault)),'元件故障类型无效。');
   ids.set(c.id,c);return c;
  });
  const points=pts=>{
@@ -69,8 +69,10 @@ function validateGraph(graph) {
   requireValid(w.fault===undefined||w.fault==='open','导线故障类型无效。');
   const editControls=w.editControls===undefined?undefined:validateEditControls(w.editControls);
   let backup;
-  if(w.reverseBackup){const b=w.reverseBackup;requireValid(ids.get(b.owner)?.type==='ammeter'&&[w.start.compId,w.end.compId].includes(b.owner)&&typeof b.autoSchematic==='boolean','反接导线备份无效。');backup={owner:b.owner,bends:points(b.bends),realBends:b.realBends===null?null:points(b.realBends),autoSchematic:b.autoSchematic,...(b.editControls?{editControls:validateEditControls(b.editControls)}:{})};}
-  return {...cleanWire(w),bends:points(w.bends||[]),realBends:w.realBends===null||w.realBends===undefined?null:points(w.realBends),...(backup?{reverseBackup:backup}:{}),...(editControls?{editControls}:{})};
+  if(w.reverseBackup){const b=w.reverseBackup;requireValid(['ammeter','voltmeter'].includes(ids.get(b.owner)?.type)&&[w.start.compId,w.end.compId].includes(b.owner)&&typeof b.autoSchematic==='boolean','反接导线备份无效。');if(b.start||b.end)for(const e of [b.start,b.end])requireValid(e&&ids.has(e.compId)&&COMPONENT_DEFS[ids.get(e.compId).type].terminals(ids.get(e.compId)).some(t=>t.id===e.termId),'反接备份端点无效。');backup={owner:b.owner,...(b.start?{start:clone(b.start),end:clone(b.end)}:{}),bends:points(b.bends),realBends:b.realBends===null?null:points(b.realBends),autoSchematic:b.autoSchematic,...(b.editControls?{editControls:validateEditControls(b.editControls)}:{})};}
+  if(w.connectionBackup){const b=w.connectionBackup;requireValid(ids.get(b.owner)?.type==='potentiometer'&&[w.start.compId,w.end.compId].includes(b.owner)&&typeof b.autoSchematic==='boolean','接线备份无效。');for(const e of [b.start,b.end])requireValid(e&&ids.has(e.compId)&&COMPONENT_DEFS[ids.get(e.compId).type].terminals(ids.get(e.compId)).some(t=>t.id===e.termId),'接线备份端点无效。');requireValid([b.start.compId,b.end.compId].includes(b.owner),'接线备份所属元件无效。');w={...w,connectionBackup:{owner:b.owner,start:clone(b.start),end:clone(b.end),bends:points(b.bends),realBends:b.realBends===null?null:points(b.realBends),autoSchematic:b.autoSchematic,...(b.editControls?{editControls:validateEditControls(b.editControls)}:{})}};}
+  const cleaned=cleanWire(w);delete cleaned.fault;
+  return {...cleaned,bends:points(w.bends||[]),realBends:w.realBends===null||w.realBends===undefined?null:points(w.realBends),...(backup?{reverseBackup:backup}:{}),...(editControls?{editControls}:{})};
  });
  return {components,wires};
 }
@@ -88,7 +90,7 @@ function validateClassroom(raw={}) {
   return {...(r.loadResistance!==undefined?{loadResistance:r.loadResistance}:{}),U:r.U,I:r.I,series:r.series,label:r.label,time:r.time,state:r.state,meters:clone(r.meters),sliders:clone(r.sliders)};
  });
  for(const k of ['recordU','recordI']){requireValid(raw[k]==null||(typeof raw[k]==='string'&&raw[k].length<40),'测量对象无效。');result[k]=raw[k]??null;}
- for(const k of ['predictionHidden','faultHidden']){requireValid(raw[k]===undefined||typeof raw[k]==='boolean','课堂模式无效。');result[k]=!!raw[k];}
+ for(const k of ['predictionHidden','faultHidden']){requireValid(raw[k]===undefined||typeof raw[k]==='boolean','课堂模式无效。');result[k]=k==='faultHidden'?false:!!raw[k];}
  requireValid(raw.predictionText===undefined||(typeof raw.predictionText==='string'&&raw.predictionText.length<=2000),'预测文字过长。');
  result.predictionText=raw.predictionText||'';return result;
 }
@@ -96,6 +98,13 @@ function validateExperiment(input) {
  requireValid(input&&input.format==='elec-lab-experiment'&&input.version===1,'请选择本实验室保存的实验 JSON 文件（版本 1）。');
  const graph=validateGraph(input),reference=input.schematicReference?validateGraph(input.schematicReference):null;
  requireValid(graph.components.filter(c=>c.fault).length+graph.wires.filter(w=>w.fault).length<=1,'每个实验最多设置一处故障。');
+ const abnormal=graph.components.find(c=>c.fault);
+ if(reference)reference.components.forEach(c=>{if(c.id===abnormal?.id)c.fault=abnormal.fault;else delete c.fault;});
+ for(const g of [graph,reference].filter(Boolean))for(const w of g.wires){
+  if(w.reverseBackup)requireValid(abnormal?.id===w.reverseBackup.owner&&abnormal.fault==='reverse','反接备份与当前异常不一致。');
+  if(w.connectionBackup)requireValid(abnormal?.id===w.connectionBackup.owner&&['upper','lower'].includes(abnormal.fault),'接线备份与当前异常不一致。');
+ }
+
  const nextId=[...graph.components,...(reference?.components||[])].reduce((n,c)=>Math.max(n,Number(c.id.slice(1))+1),0);
  requireValid(input.idCounter===undefined||(Number.isInteger(input.idCounter)&&input.idCounter>=nextId&&input.idCounter<=1e8),'元件编号计数无效。');
  requireValid(['schematic','real'].includes(input.viewMode),'实验视图无效。');
@@ -110,7 +119,7 @@ Object.assign(CircuitSimulator.prototype, {
  initClassroom() {
   this.restoreClassroom();this._classroomReady=true;
   const bar=document.createElement('div');bar.className='classroom-toolbar';
-  bar.innerHTML=`<button class="tool-button" id="experiment-file-btn">导出实验</button><button class="tool-button" id="import-experiment-btn">导入实验</button><button class="tool-button" id="meter-zoom-btn">放大读表</button><button class="tool-button" id="library-toggle" aria-expanded="true">元件库</button><button class="tool-button" id="properties-toggle" aria-expanded="true">属性面板</button><button class="tool-button" id="export-image-btn">导出图片</button><button class="tool-button" id="record-btn">实验记录</button><button class="tool-button" id="prediction-btn" aria-pressed="false">课堂预测</button><button class="tool-button" id="fault-btn">故障探究</button><span id="classroom-status" role="status">自动保存已开启</span>`;
+  bar.innerHTML=`<button class="tool-button" id="experiment-file-btn">导出实验</button><button class="tool-button" id="import-experiment-btn">导入实验</button><button class="tool-button" id="meter-zoom-btn">放大读表</button><button class="tool-button" id="library-toggle" aria-expanded="true">元件库</button><button class="tool-button" id="properties-toggle" aria-expanded="true">属性面板</button><button class="tool-button" id="export-image-btn">导出图片</button><button class="tool-button" id="record-btn">实验记录</button><button class="tool-button" id="prediction-btn" aria-pressed="false">课堂预测</button><span id="classroom-status" role="status">自动保存已开启</span>`;
   const main=document.querySelector('.main-content');main.insertBefore(bar,byId('canvas-container'));
   const prediction=document.createElement('div');prediction.id='prediction-banner';prediction.hidden=true;prediction.setAttribute('role','status');main.insertBefore(prediction,byId('canvas-container'));
   const recovery=document.createElement('div');recovery.id='recovery-banner';recovery.hidden=true;main.insertBefore(recovery,byId('canvas-container'));
@@ -125,7 +134,7 @@ Object.assign(CircuitSimulator.prototype, {
   const miniTitle=document.querySelector('#schematic-mini .mini-title');miniTitle.textContent='参考电路图 · 点击收起 / 展开';miniTitle.style.cursor='pointer';miniTitle.tabIndex=0;miniTitle.setAttribute('role','button');miniTitle.setAttribute('aria-expanded','true');const toggleMini=()=>{const closed=byId('schematic-mini').classList.toggle('mini-collapsed');miniTitle.setAttribute('aria-expanded',String(!closed));};miniTitle.onclick=toggleMini;miniTitle.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleMini();}};
   for(const [id,cls] of [['library-toggle','library-collapsed'],['properties-toggle','properties-collapsed']])byId(id).onclick=()=>{const collapsed=document.body.classList.toggle(cls);byId(id).setAttribute('aria-expanded',String(!collapsed));this.resizeCanvas();};
   const compact=window.matchMedia('(max-width:1099px)');const collapsePanels=()=>{if(compact.matches){document.body.classList.add('library-collapsed','properties-collapsed');byId('library-toggle').setAttribute('aria-expanded','false');byId('properties-toggle').setAttribute('aria-expanded','false');}};collapsePanels();compact.addEventListener('change',collapsePanels);
-  byId('export-image-btn').onclick=()=>this.openExportDialog();byId('record-btn').onclick=()=>this.openRecordsDialog();byId('prediction-btn').onclick=()=>{if(this.predictionHidden){this.predictionHidden=false;this.updatePropertiesPanel();this.recalc();this.updateMiniSchematicVisibility();}else this.openPredictionDialog();};byId('fault-btn').onclick=()=>this.openFaultDialog();
+  byId('export-image-btn').onclick=()=>this.openExportDialog();byId('record-btn').onclick=()=>this.openRecordsDialog();byId('prediction-btn').onclick=()=>{if(this.predictionHidden){this.predictionHidden=false;this.updatePropertiesPanel();this.recalc();this.updateMiniSchematicVisibility();}else this.openPredictionDialog();};
   try {const saved=localStorage.getItem(STORAGE_KEY);if(saved){const restored=validateExperiment(JSON.parse(saved));this._recoveryData=restored;this._recoveryPending=true;this.renderRecovery();}}catch(_){byId('classroom-status').textContent='上次缓存无法读取，可打开已保存的文件。';}
   document.addEventListener('pointerup',()=>this.scheduleAutosave());
   this.canvas.addEventListener('wheel',()=>this.scheduleAutosave(),{passive:true});
@@ -133,7 +142,7 @@ Object.assign(CircuitSimulator.prototype, {
   if(typeof ResizeObserver!=='undefined'){this._canvasObserver=new ResizeObserver(()=>{const box=byId('canvas-container');if(this._canvasWidth!==box.clientWidth||this._canvasHeight!==box.clientHeight)this.resizeCanvas();});this._canvasObserver.observe(byId('canvas-container'));}
   this.resizeCanvas();this.refreshClassroom();
  },
- classroomSnapshot() {return {records:clone(this.records||[]),recordU:this.recordU??null,recordI:this.recordI??null,predictionHidden:!!this.predictionHidden,predictionText:this.predictionText||'',faultHidden:!!this.faultHidden};},
+ classroomSnapshot() {return {records:clone(this.records||[]),recordU:this.recordU??null,recordI:this.recordI??null,predictionHidden:!!this.predictionHidden,predictionText:this.predictionText||'',faultHidden:false};},
  restoreClassroom(raw) {Object.assign(this,raw?clone(raw):blankClassroom());this._solutionState='unknown';this._mainMeasurements=null;this._currentSeries=null;},
  experimentData() {
   return {format:'elec-lab-experiment',version:1,name:this.experimentName||'',savedAt:new Date().toISOString(),idCounter:this.idCounter,components:this.components.map(cleanComponent),wires:this.wires.map(cleanWire),viewMode:this.viewMode,camera:{panX:this.panX,panY:this.panY,scale:this.scale},activeExperiment:this.activeExperiment??null,schematicReference:this.schematicReference?{components:this.schematicReference.components.map(cleanComponent),wires:this.schematicReference.wires.map(cleanWire)}:null,darkMode:!!this.darkMode,showGrid:!!this.showGrid,showPotPrinciple:!!this.showPotPrinciple,classroom:this.classroomSnapshot()};
@@ -308,23 +317,59 @@ Object.assign(CircuitSimulator.prototype, {
   byId('hide-results').onclick=()=>{this.predictionText=byId('prediction-text').value;this.predictionHidden=true;this.updatePropertiesPanel();this.recalc();this.renderRecords();byId('classroom-dialog').close();this.notify('预测已开始；点击“揭示结果”查看当前电路的现象。');};
   byId('reveal-results').onclick=()=>{this.predictionHidden=false;this.updatePropertiesPanel();this.recalc();this.updateMiniSchematicVisibility();byId('classroom-dialog').close();};
  },
- currentFault() {const c=this.components.find(c=>c.fault);if(c)return {kind:c.fault,component:c};const w=this.wires.find(w=>w.fault);return w?{kind:w.fault,wire:w}:null;},
- applyFault(kind,target) {
-  requireValid(!this.currentFault(),'请先解除当前故障，再设置新的故障。');
-  let object;
-  if(kind==='wire-open'){object=this.wires[Number(target)];requireValid(object&&this.activeWires().includes(object),'请选择当前视图中的导线。');}
-  else {object=this.components.find(c=>c.id===target);requireValid(object&&(kind==='reverse'?object.type==='ammeter':['resistor','bulb'].includes(object.type)),'请选择有效的故障元件。');}
-  this.saveUndo();
-  if(kind==='wire-open')object.fault='open';
-  else if(kind==='reverse'){this.swapMeterConnections(object);object.fault='reverse';}
-  else object.fault=kind;
-  this.faultHidden=false;this.predictionHidden=false;this._routeKey=null;this.updatePropertiesPanel();this.recalc();
+ currentFault() {const c=this.components.find(c=>c.fault);return c?{kind:c.fault,component:c}:null;},
+ faultKinds(c) {return ['resistor','bulb','potentiometer','ammeter','voltmeter','led','motor','bell'].includes(c?.type)?['open','short',...(c.type==='potentiometer'?['upper','lower']:['ammeter','voltmeter'].includes(c.type)?['reverse']:[])]:[];},
+ wiringPlan(c,kind) {
+  const views=['schematic','real'],plans=new Map();
+  for(const view of views){const wires=this.wires.filter(w=>!w.view||w.view==='both'||w.view===view),ports=[...new Set(wires.flatMap(w=>[w.start,w.end].filter(e=>e.compId===c.id).map(e=>e.termId)))].sort();
+   if(view!==this.viewMode&&(ports.length!==2||(kind==='reverse'&&!ports.includes('neg'))))continue;
+   requireValid(ports.length===2,'请先在当前视图用两个接线柱完成接线。');
+   if(kind==='reverse')requireValid(ports.includes('neg')&&ports.filter(p=>p!=='neg').length===1,'请只连接负接线柱和一个量程接线柱。');
+   const dest=kind==='upper'?['c','d']:kind==='lower'?['a','b']:[...ports].reverse();plans.set(view,new Map(ports.map((p,i)=>[p,dest[i]])));
+  }return plans;
  },
- swapMeterConnections(comp,restore=false) {
+ faultTargets(kind) {return this.components.filter(c=>this.faultKinds(c).includes(kind)).map(c=>({value:c.id,label:uid(c)}));},
+ applyFault(kind,target) {return this.replaceFault(kind,target);},
+ restoreFaultState() {
+  for(const c of this.components)if(c.fault==='reverse')this.swapMeterConnections(c,true);
+  for(const graph of [this,this.schematicReference].filter(Boolean)){
+   for(const w of graph.wires){if(w.connectionBackup){const b=w.connectionBackup;w.start=clone(b.start);w.end=clone(b.end);w.bends=clone(b.bends);w.realBends=clone(b.realBends);w.autoSchematic=b.autoSchematic;if(b.editControls)w.editControls=clone(b.editControls);else delete w.editControls;delete w.connectionBackup;delete w._realSmoothCache;delete w._realEditRevision;}delete w.fault;}
+   graph.components.forEach(c=>delete c.fault);
+  }this.faultHidden=false;this._routeKey=null;
+ },
+ removeFault(target) {
+  if(!this.currentFault()||(target&&this.currentFault().component.id!==target))return;
+  this.saveUndo();this.restoreFaultState();this.updatePropertiesPanel();this.recalc();this.updateMiniSchematicVisibility();
+ },
+ replaceFault(kind,target) {
+  const c=this.components.find(c=>c.id===target);requireValid(this.faultKinds(c).includes(kind),'该元件不支持此故障。');
+  if(c.fault===kind)return;
+  // Validate against the restored topology before creating an undo entry or mutating state.
+  const prior=this.currentFault();let plans;
+  if(['reverse','upper','lower'].includes(kind)){
+   const wires=clone(this.wires);
+   for(const w of wires){if(w.connectionBackup){w.start=clone(w.connectionBackup.start);w.end=clone(w.connectionBackup.end);}if(w.reverseBackup?.start){w.start=clone(w.reverseBackup.start);w.end=clone(w.reverseBackup.end);}else if(w.reverseBackup){const owner=this.components.find(o=>o.id===w.reverseBackup.owner),positive=this.meterActiveTerminal(owner).id;for(const e of [w.start,w.end])if(e.compId===owner.id)e.termId=e.termId==='neg'?positive:e.termId===positive?'neg':e.termId;}}
+   plans=this.wiringPlan.call({wires,viewMode:this.viewMode},c,kind);
+  }
+  this.saveUndo();this.restoreFaultState();const object=this.components.find(o=>o.id===target);
+  if(kind==='reverse')this.swapMeterConnections(object,false,plans);
+  if(['upper','lower'].includes(kind))for(const graph of [this,this.schematicReference].filter(Boolean))for(const w of graph.wires){const map=plans.get(w.view==='real'?'real':w.view==='schematic'?'schematic':this.viewMode);if(!map||![w.start,w.end].some(e=>e.compId===target))continue;
+   w.connectionBackup={owner:target,start:clone(w.start),end:clone(w.end),bends:clone(w.bends||[]),realBends:clone(w.realBends||null),autoSchematic:!!w.autoSchematic,...(w.editControls?{editControls:clone(w.editControls)}:{})};
+   for(const e of [w.start,w.end])if(e.compId===target)e.termId=map.get(e.termId)||e.termId;
+   w.bends=[];w.realBends=null;w.autoSchematic=true;delete w.editControls;delete w._realSmoothCache;
+  }
+  object.fault=kind;const ref=this.schematicReference?.components.find(o=>o.id===target);if(ref)ref.fault=kind;
+  this.selectedComponent=object;this.faultHidden=false;this._routeKey=null;this.updatePropertiesPanel();this.recalc();this.updateMiniSchematicVisibility();
+  if(prior&&prior.component.id!==target)this.notify('已恢复上一元件；当前电路仅保留这一处异常。');
+ },
+ swapMeterConnections(comp,restore=false,plans=null) {
   const positive=this.meterActiveTerminal(comp).id;
   const swap=w=>{
-   if(!restore)w.reverseBackup={owner:comp.id,bends:clone(w.bends||[]),realBends:w.realBends?clone(w.realBends):null,autoSchematic:!!w.autoSchematic,...(w.editControls?{editControls:clone(w.editControls)}:{})};
-   for(const end of [w.start,w.end])if(end.compId===comp.id){if(end.termId==='neg')end.termId=positive;else if(end.termId===positive)end.termId='neg';}
+   const map=plans?.get(w.view==='real'?'real':w.view==='schematic'?'schematic':this.viewMode);
+   if((restore&&w.reverseBackup?.owner!==comp.id)||(!restore&&plans&&!map))return;
+   if(!restore)w.reverseBackup={owner:comp.id,start:clone(w.start),end:clone(w.end),bends:clone(w.bends||[]),realBends:w.realBends?clone(w.realBends):null,autoSchematic:!!w.autoSchematic,...(w.editControls?{editControls:clone(w.editControls)}:{})};
+   if(restore&&w.reverseBackup?.start){w.start=clone(w.reverseBackup.start);w.end=clone(w.reverseBackup.end);}
+   else for(const end of [w.start,w.end])if(end.compId===comp.id){if(map)end.termId=map.get(end.termId)||end.termId;else if(end.termId==='neg')end.termId=positive;else if(end.termId===positive)end.termId='neg';}
    if(restore&&w.reverseBackup?.owner===comp.id){
     const backup=w.reverseBackup;w.bends=backup.bends;w.realBends=backup.realBends;w.autoSchematic=backup.autoSchematic;
     if(backup.editControls)w.editControls=clone(backup.editControls);else delete w.editControls;
@@ -335,57 +380,9 @@ Object.assign(CircuitSimulator.prototype, {
   this.wires.filter(w=>[w.start.compId,w.end.compId].includes(comp.id)).forEach(swap);
   if(this.schematicReference){this.schematicReference.wires.filter(w=>[w.start.compId,w.end.compId].includes(comp.id)).forEach(swap);}
  },
- removeFault() {
-  const fault=this.currentFault();if(!fault)return;
-  this.saveUndo();if(fault.component?.fault==='reverse')this.swapMeterConnections(fault.component,true);
-  this.components.forEach(c=>delete c.fault);this.wires.forEach(w=>delete w.fault);this.faultHidden=false;this._routeKey=null;this.updatePropertiesPanel();this.recalc();this.updateMiniSchematicVisibility();
- },
- faultTargets(kind) {
-  if(kind==='wire-open')return this.activeWires().map(w=>({value:String(this.wires.indexOf(w)),label:`导线 ${this.wires.indexOf(w)+1} · ${w.start.compId}—${w.end.compId}`}));
-  return this.components.filter(c=>kind==='reverse'?c.type==='ammeter':['resistor','bulb'].includes(c.type)).map(c=>({value:c.id,label:uid(c)}));
- },
- replaceFault(kind,target) {
-  requireValid(this.faultTargets(kind).some(o=>o.value===String(target)),'请先选择有效的故障位置。');
-  if(!this.currentFault()){this.applyFault(kind,target);return;}
-  // Treat changing a fault as one reversible teacher action.
-  this.saveUndo();const suppressed=this.suppressUndo;this.suppressUndo=true;
-  try {this.removeFault();this.applyFault(kind,target);}
-  finally {this.suppressUndo=suppressed;}
- },
- updateFaultTargets(preferred) {
-  const kind=byId('fault-kind').value,select=byId('fault-target'),options=this.faultTargets(kind),previous=preferred??select.value;
-  select.innerHTML=options.length?options.map(o=>`<option value="${escape(o.value)}">${escape(o.label)}</option>`).join(''):'<option value="">暂无可选位置</option>';
-  if(options.some(o=>o.value===String(previous)))select.value=String(previous);
-  select.disabled=!options.length;byId('fault-apply').disabled=!options.length;
-  byId('fault-apply').textContent=this.currentFault()?'更换故障':'设置故障';
-  const reference=this.viewMode==='real'&&!this.activeWires().length&&this.wires.some(w=>w.view==='schematic');
-  byId('fault-show-schematic').hidden=!reference;
-  byId('fault-example').hidden=!!options.length;
-  byId('fault-target-help').textContent=options.length?`有 ${options.length} 个可选位置；选择后点击“${this.currentFault()?'更换故障':'设置故障'}”。${reference?'当前实物图尚未接线，观察故障前请先接线或切换到电路图。':''}`:reference?'当前实物图尚未接线。可以先完成实物接线，或切换到电路图设置导线故障。':kind==='wire-open'?'当前视图没有导线，请先连线，或载入下面的串联示例。':kind==='reverse'?'当前没有电流表，请先添加电流表，或载入下面的串联示例。':'当前没有灯泡或定值电阻，请先添加对应元件，或载入下面的串联示例。';
- },
- openFaultDialog(preferredKind) {
-  this.showClassroomDialog('fault','故障探究',`<p>教师先确认电路正常工作，再设置一处故障并开始探究。学生观察测量现象，返回画布选中怀疑的元件或导线，随后判断位置。</p><section id="fault-setup"><div class="classroom-fields"><label>故障类型<select id="fault-kind"><option value="open">灯泡 / 电阻内部断路</option><option value="short">灯泡 / 电阻内部短路</option><option value="wire-open">导线断路</option><option value="reverse">电流表反接</option></select></label><label>设置位置<select id="fault-target" aria-describedby="fault-target-help"></select></label></div><p id="fault-target-help" class="classroom-note" role="status"></p><div class="classroom-actions"><button id="fault-show-schematic" hidden>切换到电路图</button><button id="fault-example" hidden>载入串联示例</button><button id="fault-apply">设置故障</button></div><p class="classroom-note">载入示例会替换当前电路，可用“撤销”恢复；示例在两种视图中都已完成接线。</p></section><div class="classroom-actions"><button class="primary" id="fault-start">开始探究，隐藏位置</button><button id="fault-check">判断画布中所选位置</button><button id="fault-reveal">揭示故障</button><button id="fault-remove">解除故障</button><button id="fault-return">返回电路观察</button></div><p id="fault-summary" role="status"></p><p class="classroom-note">断路不改变正常参数；内部短路按零电阻连接处理。电流表反接交换该表两端导线，不移动分流点。解除故障后恢复正常计算。</p>`);
-  const f=this.currentFault(),kind=preferredKind||(f?.wire?'wire-open':f?.kind)||'open';byId('fault-kind').value=kind;
-  const target=f?.wire?String(this.wires.indexOf(f.wire)):f?.component?.id??this.selectedComponent?.id;
-  byId('fault-kind').onchange=()=>this.updateFaultTargets();this.updateFaultTargets(target);
-  byId('fault-apply').onclick=()=>{try{this.replaceFault(byId('fault-kind').value,byId('fault-target').value);this.updateFaultTargets();this.renderFaultSummary();}catch(e){this.notify(e.message);}};
-  byId('fault-show-schematic').onclick=()=>{const kind=byId('fault-kind').value;this.toggleViewMode();this.openFaultDialog(kind);};
-  byId('fault-example').onclick=()=>{const kind=byId('fault-kind').value;this.loadExperiment(0);this.wires.forEach(w=>w.view='both');this.recalc();this.fitView(310);this.openFaultDialog(kind);};
-  byId('fault-start').onclick=()=>{if(!this.currentFault())return this.notify('请先设置故障。');this.faultHidden=true;this.updatePropertiesPanel();this.recalc();this.updateMiniSchematicVisibility();byId('classroom-dialog').close();this.notify('请观察电表和灯泡，并选中怀疑的元件或导线。');};
-  byId('fault-check').onclick=()=>{const f=this.currentFault();byId('fault-summary').textContent=!f?'当前未设置故障。':(f.component===this.selectedComponent&&!!f.component)||(f.wire===this.selectedWire&&!!f.wire)?'判断正确！已找到故障位置。':'尚未找到故障位置，请继续观察或更换所选对象。';};
-  byId('fault-reveal').onclick=()=>{this.faultHidden=false;this.updatePropertiesPanel();this.recalc();this.updateMiniSchematicVisibility();this.updateFaultTargets();this.renderFaultSummary();};
-  byId('fault-remove').onclick=()=>{this.removeFault();this.updateFaultTargets();this.renderFaultSummary();};byId('fault-return').onclick=()=>byId('classroom-dialog').close();this.renderFaultSummary();
- },
- renderFaultSummary() {
-  const f=this.currentFault(),kind={open:'断路',short:'内部短路',reverse:'电流表反接'};
-  byId('fault-summary').textContent=!f?'当前未设置故障。':this.faultHidden?'故障位置已隐藏。请返回画布选择怀疑的元件或导线，再回来判断。':`${f.component?uid(f.component):'导线 '+(this.wires.indexOf(f.wire)+1)}：${kind[f.kind]}`;
-  byId('fault-setup').hidden=!!f&&this.faultHidden;
-  for(const id of ['fault-start','fault-reveal','fault-remove'])byId(id).disabled=!f;
-  byId('fault-check').disabled=!f||(!this.selectedComponent&&!this.selectedWire);
- },
  drawFaultComponent(comp) {
   if(!comp.fault||this.faultHidden||this.predictionHidden)return;
-  this.label(comp,{open:'断路',short:'短接',reverse:'反接'}[comp.fault],0,-115,{font:'bold 15px Microsoft YaHei',color:'#e74c3c'});
+  this.label(comp,{open:'断路',short:'短路',reverse:'正负接反',upper:'同接上接线柱',lower:'同接下接线柱'}[comp.fault],0,this.viewMode==='schematic'?-52:-115,{font:'bold 15px Microsoft YaHei',color:'#e74c3c'});
  },
  drawFaultWire(w,pts) {
   if(w.fault!=='open'||this.faultHidden||this.predictionHidden||!pts.length)return;

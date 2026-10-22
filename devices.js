@@ -25,13 +25,13 @@ Object.assign(CircuitSimulator.prototype,{
   const t=Math.max(0,Math.min(1,level));for(let i=1;i<stops.length;i++)if(t<=stops[i][0]){const [x,a]=stops[i-1],[y,b]=stops[i];return `rgb(${blend(a,b,(t-x)/(y-x)).join(',')})`;}return 'rgb(255,249,213)';
  },
  bulbGlassColor(level){const t=Math.max(0,Math.min(1,level)),base=this.darkMode?[98,113,132]:[200,214,223],warm=this.lightColor(t).match(/\d+/g).map(Number);return `rgb(${blend(base,warm,Math.pow(t,.6)).join(',')})`;},
- isBellRinging(c){return this.simulationRunning&&!this.predictionHidden&&Math.abs(c._current||0)>Math.max(.002,(c.ratedCurrent||.1)*.15);},
+ isBellRinging(c){return !['open','short'].includes(c.fault)&&this.simulationRunning&&!this.predictionHidden&&Math.abs(c._current||0)>Math.max(.002,(c.ratedCurrent||.1)*.15);},
  drawDeviceSVG(kind){this.drawSVG(kind+'-'+(this.darkMode?'dark':'light')+'-'+(this.gridSize||20),deviceArtwork(kind,this.darkMode,this.gridSize||20),-80,-90,160,190);},
  drawLed(c){this.drawDeviceSVG('led-symbol');this.drawLoadLabel(c,59);},
  drawMotor(c){this.drawDeviceSVG('motor-symbol');this.drawLoadLabel(c,44);},
  drawBell(c){this.drawDeviceSVG('bell-symbol');this.drawLoadLabel(c,56);},
  drawLedReal(c){
-  const ctx=this.ctx,level=this.simulationRunning&&!this.predictionHidden?1-Math.exp(-Math.max(0,c._current||0)/Math.max(.001,c.ratedCurrent)):0;
+  const ctx=this.ctx,level=this.simulationRunning&&!this.predictionHidden&&!['open','short'].includes(c.fault)?1-Math.exp(-Math.max(0,c._current||0)/Math.max(.001,c.ratedCurrent)):0;
   if(level>.001){const g=ctx.createRadialGradient(0,-25,3,0,-25,35+level*20);g.addColorStop(0,`rgba(255,40,85,${level*.85})`);g.addColorStop(1,'rgba(255,40,85,0)');ctx.fillStyle=g;ctx.beginPath();ctx.arc(0,-25,35+level*20,0,Math.PI*2);ctx.fill();}
   this.drawDeviceSVG('led-real');
   if(level>.001){ctx.fillStyle=`rgba(255,225,220,${level})`;ctx.beginPath();ctx.ellipse(0,-24,7,9,0,0,Math.PI*2);ctx.fill();}
@@ -46,7 +46,7 @@ Object.assign(CircuitSimulator.prototype,{
   this.drawDeviceSVG('bell-hammer');ctx.restore();this.bindingPost(-34,76);this.bindingPost(34,76);this.drawLoadLabel(c,101);
  },
  drawLoadLabel(c,y){
-  const names={led:'发光二极管',motor:'电动机',bell:'电铃'},active=this.simulationRunning&&!this.predictionHidden;
+  const names={led:'发光二极管',motor:'电动机',bell:'电铃'},active=this.simulationRunning&&!this.predictionHidden&&!['open','short'].includes(c.fault);
   const over=active&&Math.abs(c._current||0)>(c.ratedCurrent||1);
   this.label(c,(c.label||names[c.type])+(over?'（过载）':''),0,y,{font:'12px Microsoft YaHei',color:over?'#e74c3c':'#333'});
   if(active&&Math.abs(c._current||0)>1e-6)this.label(c,(Math.abs(c._current)*1000).toFixed(1)+' mA',0,y+16,{font:'11px Arial',color:'#7f8c8d'});
@@ -54,7 +54,7 @@ Object.assign(CircuitSimulator.prototype,{
  advanceDevices(dt){
   let changing=false;
   for(const c of this.components){
-   const live=this.simulationRunning&&!this.predictionHidden;
+   const live=this.simulationRunning&&!this.predictionHidden&&!['open','short'].includes(c.fault);
    if(c.type==='motor'){
     const target=live?Math.max(-18,Math.min(18,(c._current||0)/Math.max(c.ratedCurrent,.001)*9)):0;
     c._rotorSpeed=(c._rotorSpeed||0)+(target-(c._rotorSpeed||0))*(1-Math.exp(-dt/.28));
